@@ -1,92 +1,111 @@
 #!/usr/bin/julia
-
 #
 # Construct adjacency matrix
 #
-# The radius of the Earth is computed with
-# https://rechneronline.de/earth-radius/ at the population center of
-# the U.S. (37.411764°N, 92.394544°W).
+using Iterators
+import DataStructures
+using ProtoBuf
 
 # Parameters
-project_dir  = "/home/moon/Documents/gerrymander/"
-output_dir   = project_dir * "/output"
-bounds_file  = output_dir * "/bounds.prototxt"
-graph_file   = output_dir * "/graph.prototxt"
-earth_radius = 6370286 # meters
+project_dir      = chomp(readall(`git rev-parse --show-toplevel`)) * "/"
+protoc           = "/home/moon/src/protobuf/src/protoc"
+results_dir      = project_dir * "/results/"
+county_data_file = results_dir * "/county_data.tsv"
+graph_file       = results_dir * "/graph.prototxt"
+const personal_stdev      = 50.0 # km
+const max_dist            = 200.0 # km
+const partisan_attraction = 8.0
+const partisan_repulsion  = 4.0
+const bin_size            = 25.0 # km
 
-# Import packages
-using ProtoBuf
-import DataStructures
-
-# Read boundary data from protobuf
-println("Reading boundary data...")
-include(output_dir * "/gerrymander_pb.jl")
-bounds_list_proto = CountyBoundariesList()
-open(bounds_file, "r") do f
-    readproto(f, bounds_list_proto)
+# Initialize protobuf
+println("Initializing protobuf...")
+isdir(results_dir) || mkdir(results_dir)
+if !isfile(results_dir * "/gerrymander_pb.jl")
+    run(`$protoc --plugin=$julia_protobuf_dir/plugin/protoc-gen-julia 
+         -I=$project_dir --julia_out=$results_dir
+         gerrymander.proto`)
 end
+include(results_dir * "/gerrymander_pb.jl")
 
-# Construct county graph one county at a time
-println("Constructing county graph...")
-graph = Dict{UInt32, Dict{UInt32, Float32}}()
-county_list = DataStructures.list()
-segment_list = Dict{Tuple{Float32, Float32, Float32, Float32}, UInt32}()
-deg_to_rad = pi / 180
-for bounds_proto in bounds_list_proto.county_bounds
-    county = bounds_proto.geoid
-    county_list = DataStructures.cons(county, county_list)
-    neighbor_list = Dict{UInt32, Float32}()
+# Import county population data
+println("Importing county population data...")
+(county_data, _) = readdlm(county_data_file, '\t', header=true)
 
-    for polygon_proto in bounds_proto.polygon
-        num_coords = length(polygon_proto.x) - 1
-        for i = 1:num_coords
+# Construct graph one county at a time
+println("Constructing county interaction graph...")
+graph = Dict{Int64, Dict{Int64, Float64}}()
+geoid_list = DataStructures.list()
+binned_county_data = Dict{Tuple{Int64, Int64, Int64},
+                          Array{Tuple{Int64, Int64, Int64, Int64,
+                                      Float64, Float64, Float64, Float64}}}()
+const personal_var = personal_stdev^2
+const max_dist2 = max_dist^2
+for row in 1:size(county_data, 1)
+    edge_weights = Dict{Int64, Float64}()
 
-            # Check if another county has encountered this segment
-            # Note: If another county has seen it, then compute the
-            # segment length. Otherwise record the segment and wait
-            # for another county to encounter it.
-            x1 = polygon_proto.x[i]
-            y1 = polygon_proto.y[i]
-            x2 = polygon_proto.x[i+1]
-            y2 = polygon_proto.y[i+1]
-            if haskey(segment_list, (x1, y1, x2, y2))
-                # Compute length of boundary segment and record
-                # Note: haversine formula for great circle distance
-                neighbor = segment_list[(x1, y1, x2, y2)]
-                l1  = deg_to_rad * x1
-                ph1 = deg_to_rad * y1
-                l2  = deg_to_rad * x2
-                ph2 = deg_to_rad * y2
-                hav_angle = (sin((ph2-ph1)/2)^2
-                             + cos(ph1) * cos(ph2) * sin((l2-l1)/2)^2)
-                d = 2 * earth_radius * asin(sqrt(hav_angle))
-                if haskey(neighbor_list, neighbor)
-                    neighbor_list[neighbor] += d
-                else
-                    neighbor_list[neighbor] = d
-                end
-            else
-                # Add segment to list of encountered segments
-                segment_list[(x2, y2, x1, y1)] = county
+    # Current county data
+    geoid1     = Int64(county_data[row, 1])
+    pop1       = Int64(county_data[row, 2])
+    dem_votes1 = Int64(county_data[row, 3])
+    gop_votes1 = Int64(county_data[row, 4])
+    x1         = Float64(county_data[row, 5])
+    y1         = Float64(county_data[row, 6])
+    z1         = Float64(county_data[row, 7])
+    var1       = Float64(county_data[row, 8])
+
+    # Compute edge weights for counties in nearby bins
+    pos1 = [x1 y1 z1]
+    bins_min = Array{Int64}(floor((pos1 - max_dist) / bin_size))
+    bins_max = Array{Int64}(floor((pos1 + max_dist) / bin_size))
+    for bin in Iterators.product(bins_min[1]:bins_max[1],
+                                 bins_min[2]:bins_max[2],
+                                 bins_min[3]:bins_max[3])
+        if !haskey(binned_county_data, bin)
+            continue
+        end
+        for (geoid2, pop2, dem_votes2, gop_votes2, x2, y2, z2, var2) in binned_county_data[bin]
+            dist2 = (x2 - x1)^2 + (y2 - y1)^2 + (z2 - z1)^2
+            if dist2 > max_dist2
+                continue
             end
+            interaction_var = var1 + var2 + 2 * personal_var
+            unit_interaction = (exp(-0.5 * dist2 / interaction_var)
+                                / (2 * pi * sqrt(interaction_var)))
+            eff_pop_product = (pop1 * pop2
+                               + partisan_attraction * (dem_votes1 * dem_votes2
+                                                        + gop_votes1 * gop_votes2)
+                               - partisan_repulsion * (dem_votes1 * gop_votes2
+                                                       + gop_votes1 * dem_votes2))
+            edge_weights[geoid2] = eff_pop_product * unit_interaction
         end
     end
 
-    # Construct graph edges corresponding to current county
-    graph[county] = neighbor_list
-    for neighbor in keys(neighbor_list)
-        graph[neighbor][county] = neighbor_list[neighbor]
+    # Add current county data to graph and binned cache
+    graph[geoid1] = edge_weights
+    for geoid2 in keys(edge_weights)
+        graph[geoid2][geoid1] = edge_weights[geoid2]
     end
+    geoid_list = DataStructures.cons(geoid1, geoid_list)
+    bin = (Int64(floor(x1 / bin_size)),
+           Int64(floor(y1 / bin_size)),
+           Int64(floor(z1 / bin_size)))
+    if !haskey(binned_county_data, bin)
+        binned_county_data[bin] = Array{Tuple{Int64, Int64, Int64, Int64,
+                                              Float64, Float64, Float64, Float64}}(0)
+    end
+    push!(binned_county_data[bin],
+          (geoid1, pop1, dem_votes1, gop_votes1, x1, y1, z1, var1))
     
 end
 
 # BFS to find connected component of graph
-println("Breadth-first search on county graph...")
-search_start = county_list.head
+println("Breadth-first search on county interaction graph...")
+search_start = geoid_list.head
 search_queue = DataStructures.list(search_start)
-is_connected = Dict{UInt32, Bool}()
-for county in county_list
-    is_connected[county] = false
+is_connected = Dict{Int64, Bool}()
+for geoid in geoid_list
+    is_connected[geoid] = false
 end
 is_connected[search_start] = true
 while !isempty(search_queue)
@@ -101,20 +120,20 @@ while !isempty(search_queue)
 end
 
 # Convert graph to protobuf format
-println("Converting county graph to protobuf...")
+println("Converting county interaction graph to protobuf...")
 graph_proto = Graph()
 fillset(graph_proto, :node)
 fillset(graph_proto, :edge)
-for county in county_list
-    if is_connected[county]
-        add_field!(graph_proto, :node, county)
-        neighbor_list = graph[county]
+for geoid in geoid_list
+    if is_connected[geoid]
+        add_field!(graph_proto, :node, UInt32(geoid))
+        neighbor_list = graph[geoid]
         for neighbor in keys(neighbor_list)
-            if is_connected[neighbor] && county < neighbor
+            if is_connected[neighbor] && geoid < neighbor
                 edge_proto = GraphEdge()
-                set_field!(edge_proto, :node1, county)
-                set_field!(edge_proto, :node2, neighbor)
-                set_field!(edge_proto, :weight, neighbor_list[neighbor])
+                set_field!(edge_proto, :node1, UInt32(geoid))
+                set_field!(edge_proto, :node2, UInt32(neighbor))
+                set_field!(edge_proto, :weight, Float32(neighbor_list[neighbor]))
                 add_field!(graph_proto, :edge, edge_proto)
             end
         end
@@ -122,7 +141,7 @@ for county in county_list
 end
 
 # Write results to file
-println("Writing county graph to file...")
+println("Writing county interaction graph to file...")
 open(graph_file, "w") do f
     writeproto(f, graph_proto)
 end

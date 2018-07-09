@@ -1,34 +1,12 @@
 syntax = "proto3";
 
-message CountyPropertiesList {
-  string desc = 1;
-  repeated CountyProperties county_props = 2;
-}
 message CountyBoundariesList {
-  string desc = 1;
-  repeated CountyBoundaries county_bounds = 2;
-}
-
-message CountyProperties {
-  string name = 1;
-  uint32 geoid = 2;
-  uint32 state_fips = 3;
-  uint32 county_fips = 4;
-  float area = 5;
-  Coord interior_point = 6;
-  uint32 population = 7;
-  uint32 dem_votes = 8;
-  uint32 gop_votes = 9;
+  repeated CountyBoundaries county_bounds = 1;
 }
 
 message CountyBoundaries {
   uint32 geoid = 1;
   repeated Polygon polygon = 2;
-}
-
-message Coord {
-  float long = 1;
-  float lat = 2;
 }
 
 message Polygon {

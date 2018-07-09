@@ -1,24 +1,35 @@
 #!/usr/bin/julia
 
 # Parameters
-project_dir  = "/home/moon/Documents/gerrymander/"
-output_dir   = project_dir * "/output"
-bounds_file  = output_dir * "/bounds.prototxt"
-parts_file   = output_dir * "/parts.csv"
-image_file   = output_dir * "/parts.png"
-color_generator = "/home/moon/src/randomcolor-py/getcolor.py"
+project_dir        = chomp(readall(`git rev-parse --show-toplevel`)) * "/"
+protoc             = "/home/moon/src/protobuf/src/protoc"
+results_dir        = project_dir * "/results/"
+parts_file         = results_dir * "/parts.tsv"
+county_bounds_file = results_dir * "/bounds.prototxt"
+image_file         = results_dir * "/parts.png"
+color_generator    = "/home/moon/src/randomcolor-py/getcolor.py"
 
 # Import packages
 using ProtoBuf
 import DataStructures
 using PyPlot
 
+# Initialize protobuf
+println("Initializing protobuf...")
+isdir(results_dir) || mkdir(results_dir)
+if !isfile(results_dir * "/gerrymander_pb.jl")
+    run(`$protoc --plugin=$julia_protobuf_dir/plugin/protoc-gen-julia 
+         -I=$project_dir --julia_out=$results_dir
+         gerrymander.proto`)
+end
+include(results_dir * "/gerrymander_pb.jl")
+
 # Import partition data
 println("Reading partition data...")
 part_list = Dict{UInt32, UInt32}()
 num_parts = 0
-part_data = readcsv(parts_file)
-for row in 1:size(part_data)[1]
+part_data = readdlm(parts_file, '\t')
+for row in 1:size(part_data, 1)
     geoid = UInt32(part_data[row, 1])
     part = UInt32(part_data[row, 2])
     part_list[geoid] = part
@@ -29,14 +40,13 @@ end
 println("Generating plot colors...")
 color_list = []
 for i = 1:num_parts
-    color_list = [color_list; readall(`$color_generator`)]
+    color_list = [color_list; chomp(readall(`$color_generator`))]
 end
 
 # Read boundary data from protobuf
 println("Reading boundary data...")
-include(output_dir * "/gerrymander_pb.jl")
 bounds_list_proto = CountyBoundariesList()
-open(bounds_file, "r") do f
+open(county_bounds_file, "r") do f
     readproto(f, bounds_list_proto)
 end
 
