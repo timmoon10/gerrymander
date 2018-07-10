@@ -2,6 +2,7 @@
 #
 # Parse county population data files
 #
+
 import JSON
 
 # Parameters
@@ -17,8 +18,8 @@ const deg_to_rad   = pi / 180
 
 # Get state codes
 println("Parsing state codes...")
-#(state_codes, _) = readdlm(project_dir * "/data/state_codes.tsv", '\t', header=true)
-state_codes = [["California" "CA" 6]]
+(state_codes, _) = readdlm(project_dir * "/data/state_codes.tsv", '\t', header=true)
+#state_codes = [["California" "CA" 6]]
 
 # Import population and voting data
 # Note: Each county GEOID maps to the tuple:

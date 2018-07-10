@@ -1,5 +1,9 @@
 #!/usr/bin/julia
 
+using ProtoBuf
+import DataStructures
+using PyPlot
+
 # Parameters
 project_dir        = chomp(readall(`git rev-parse --show-toplevel`)) * "/"
 protoc             = "/home/moon/src/protobuf/src/protoc"
@@ -8,11 +12,6 @@ parts_file         = results_dir * "/parts.tsv"
 county_bounds_file = results_dir * "/bounds.prototxt"
 image_file         = results_dir * "/parts.png"
 color_generator    = "/home/moon/src/randomcolor-py/getcolor.py"
-
-# Import packages
-using ProtoBuf
-import DataStructures
-using PyPlot
 
 # Initialize protobuf
 println("Initializing protobuf...")

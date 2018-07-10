@@ -2,19 +2,20 @@
 #
 # Construct adjacency matrix
 #
+
 using Iterators
 import DataStructures
 using ProtoBuf
 
 # Parameters
-project_dir      = chomp(readall(`git rev-parse --show-toplevel`)) * "/"
-protoc           = "/home/moon/src/protobuf/src/protoc"
-results_dir      = project_dir * "/results/"
-county_data_file = results_dir * "/county_data.tsv"
-graph_file       = results_dir * "/graph.prototxt"
-const personal_stdev      = 50.0 # km
+project_dir            = chomp(readall(`git rev-parse --show-toplevel`)) * "/"
+protoc                 = "/home/moon/src/protobuf/src/protoc"
+results_dir            = project_dir * "/results/"
+county_data_file       = results_dir * "/county_data.tsv"
+interaction_graph_file = results_dir * "/interaction_graph.prototxt"
+const personal_stdev      = 25.0 # km
 const max_dist            = 200.0 # km
-const partisan_attraction = 8.0
+const partisan_attraction = 2.0
 const partisan_repulsion  = 4.0
 const bin_size            = 25.0 # km
 
@@ -142,6 +143,6 @@ end
 
 # Write results to file
 println("Writing county interaction graph to file...")
-open(graph_file, "w") do f
+open(interaction_graph_file, "w") do f
     writeproto(f, graph_proto)
 end

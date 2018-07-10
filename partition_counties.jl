@@ -1,16 +1,19 @@
 #!/usr/bin/julia
+
 using ProtoBuf
 import DataStructures
 using Metis
 
 # Parameters
-project_dir      = chomp(readall(`git rev-parse --show-toplevel`)) * "/"
-protoc           = "/home/moon/src/protobuf/src/protoc"
-results_dir      = project_dir * "/results/"
-county_data_file = results_dir * "/county_data.tsv"
-graph_file       = results_dir * "/graph.prototxt"
+project_dir            = chomp(readall(`git rev-parse --show-toplevel`)) * "/"
+protoc                 = "/home/moon/src/protobuf/src/protoc"
+results_dir            = project_dir * "/results/"
+county_data_file       = results_dir * "/county_data.tsv"
+interaction_graph_file = results_dir * "/interaction_graph.prototxt"
+geography_graph_file   = results_dir * "/geography_graph.prototxt"
 parts_file       = results_dir * "/parts.tsv"
-num_partitions   = 6
+num_partitions   = 40
+balance_tolerance = 1.5
 
 # Initialize protobuf
 println("Initializing protobuf...")
@@ -22,19 +25,32 @@ if !isfile(results_dir * "/gerrymander_pb.jl")
 end
 include(results_dir * "/gerrymander_pb.jl")
 
-# Import county graph
+# Import county geography graph
+println("Importing county geography graph...")
+geography_graph_proto = Graph()
+open(geography_graph_file, "r") do f
+    readproto(f, geography_graph_proto)
+end
+geography_graph = Set{Tuple{UInt32, UInt32}}()
+for edge_proto in geography_graph_proto.edge
+    geoid1 = min(edge_proto.node1, edge_proto.node2)
+    geoid2 = max(edge_proto.node1, edge_proto.node2)
+    push!(geography_graph, (geoid1, geoid2))
+end
+
+# Import county interaction graph
 println("Importing county interaction graph...")
-graph_proto = Graph()
-open(graph_file, "r") do f
-    readproto(f, graph_proto)
+interaction_graph_proto = Graph()
+open(interaction_graph_file, "r") do f
+    readproto(f, interaction_graph_proto)
 end
 
 # Determine matrix indices corresponding to GEOIDs
-num_inds = length(graph_proto.node)
+num_inds = length(interaction_graph_proto.node)
 geoid_to_ind = Dict{UInt32, Int32}()
 ind_to_geoid = Array{UInt32, 1}(num_inds)
 for ind = 1:num_inds
-    geoid = graph_proto.node[ind]
+    geoid = interaction_graph_proto.node[ind]
     geoid_to_ind[geoid] = ind
     ind_to_geoid[ind] = geoid
 end
@@ -60,15 +76,22 @@ adjwgts = Array{Float32, 1}()
 
 # Construct edges in adjacency matrix
 max_weight = 0
-for edge_proto in graph_proto.edge
-    ind1 = geoid_to_ind[edge_proto.node1]
-    ind2 = geoid_to_ind[edge_proto.node2]
+for edge_proto in interaction_graph_proto.edge
 
+    # Check if counties are adjacent
+    geoid1 = min(edge_proto.node1, edge_proto.node2)
+    geoid2 = max(edge_proto.node1, edge_proto.node2)
+    if !in((geoid1, geoid2), geography_graph)
+        continue
+    end
+        
     # Determine edge weight
     weight = edge_proto.weight
     max_weight = max(weight, max_weight)
     
     # Add current edge to adjacency matrix
+    ind1 = geoid_to_ind[geoid1]
+    ind2 = geoid_to_ind[geoid2]
     push!(rows, ind1)
     push!(cols, ind2)
     push!(adjwgts, weight)
@@ -80,7 +103,7 @@ end
 num_edges = length(adjwgts)
 adjwgts_int = Array{Int32, 1}(num_edges)
 for i = 1:num_edges
-    adjwgts_int[i] = max(1, round(Int32, 1e6 * adjwgts[i] / max_weight))
+    adjwgts_int[i] = round(Int32, max(1e6 * adjwgts[i] / max_weight, 1))
 end
 
 # Construct CSC sparse adjacency matrix
@@ -93,7 +116,7 @@ options = -ones(Cint, Metis.METIS_NOPTIONS)
 options[Metis.METIS_OPTION_NCUTS] = 4
 options[Metis.METIS_OPTION_CONTIG] = 1
 ubvec = Array(Cfloat, 1)
-ubvec[1] = 1.25
+ubvec[1] = balance_tolerance
 objval, part = partGraphKway(adj, num_partitions,
                              adjwgt=true, vwgt=pops,
                              ubvec=ubvec, options=options)
