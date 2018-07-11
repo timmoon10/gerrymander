@@ -2,32 +2,9 @@
 #
 # Construct geography graph
 #
-# The radius of the Earth is computed with
-# https://rechneronline.de/earth-radius/ at the population center of
-# the U.S. (37.411764°N, 92.394544°W).
-
 using ProtoBuf
 import DataStructures
-
-# Parameters
-project_dir          = chomp(readall(`git rev-parse --show-toplevel`)) * "/"
-protoc               = "/home/moon/src/protobuf/src/protoc"
-results_dir          = project_dir * "/results/"
-county_bounds_file   = results_dir * "/bounds.prototxt"
-geography_graph_file = results_dir * "/geography_graph.prototxt"
-earth_radius = 6370.286 # km
-
-# Import packages
-
-# Initialize protobuf
-println("Initializing protobuf...")
-isdir(results_dir) || mkdir(results_dir)
-if !isfile(results_dir * "/gerrymander_pb.jl")
-    run(`$protoc --plugin=$julia_protobuf_dir/plugin/protoc-gen-julia 
-         -I=$project_dir --julia_out=$results_dir
-         gerrymander.proto`)
-end
-include(results_dir * "/gerrymander_pb.jl")
+include(AbstractString(dirname(@__FILE__)) * "/common.jl")
 
 # Read boundary data from protobuf
 println("Reading boundary data...")

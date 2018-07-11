@@ -1,33 +1,11 @@
 #!/usr/bin/julia
 #
-# Construct adjacency matrix
+# Construct county interaction matrix
 #
-
 using Iterators
 import DataStructures
 using ProtoBuf
-
-# Parameters
-project_dir            = chomp(readall(`git rev-parse --show-toplevel`)) * "/"
-protoc                 = "/home/moon/src/protobuf/src/protoc"
-results_dir            = project_dir * "/results/"
-county_data_file       = results_dir * "/county_data.tsv"
-interaction_graph_file = results_dir * "/interaction_graph.prototxt"
-const personal_stdev      = 25.0 # km
-const max_dist            = 200.0 # km
-const partisan_attraction = 2.0
-const partisan_repulsion  = 4.0
-const bin_size            = 25.0 # km
-
-# Initialize protobuf
-println("Initializing protobuf...")
-isdir(results_dir) || mkdir(results_dir)
-if !isfile(results_dir * "/gerrymander_pb.jl")
-    run(`$protoc --plugin=$julia_protobuf_dir/plugin/protoc-gen-julia 
-         -I=$project_dir --julia_out=$results_dir
-         gerrymander.proto`)
-end
-include(results_dir * "/gerrymander_pb.jl")
+include(AbstractString(dirname(@__FILE__)) * "/common.jl")
 
 # Import county population data
 println("Importing county population data...")

@@ -2,17 +2,9 @@
 #
 # Parse county geography data files
 #
-
 import JSON
 using ProtoBuf
-
-# Parameters
-project_dir        = chomp(readall(`git rev-parse --show-toplevel`)) * "/"
-download_dir       = project_dir * "/data/downloads/"
-results_dir        = project_dir * "/results/"
-county_bounds_file = results_dir * "/bounds.prototxt"
-protoc             = "/home/moon/src/protobuf/src/protoc"
-julia_protobuf_dir = "/home/moon/.julia/v0.4/ProtoBuf"
+include(AbstractString(dirname(@__FILE__)) * "/common.jl")
 
 # Construct protobuf objects
 println("Initializing protobuf objects...")

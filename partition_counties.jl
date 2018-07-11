@@ -1,29 +1,11 @@
 #!/usr/bin/julia
-
+#
+# Partition counties based on interaction graph and geography graph
+#
 using ProtoBuf
 import DataStructures
 using Metis
-
-# Parameters
-project_dir            = chomp(readall(`git rev-parse --show-toplevel`)) * "/"
-protoc                 = "/home/moon/src/protobuf/src/protoc"
-results_dir            = project_dir * "/results/"
-county_data_file       = results_dir * "/county_data.tsv"
-interaction_graph_file = results_dir * "/interaction_graph.prototxt"
-geography_graph_file   = results_dir * "/geography_graph.prototxt"
-parts_file       = results_dir * "/parts.tsv"
-num_partitions   = 40
-balance_tolerance = 1.5
-
-# Initialize protobuf
-println("Initializing protobuf...")
-isdir(results_dir) || mkdir(results_dir)
-if !isfile(results_dir * "/gerrymander_pb.jl")
-    run(`$protoc --plugin=$julia_protobuf_dir/plugin/protoc-gen-julia 
-         -I=$project_dir --julia_out=$results_dir
-         gerrymander.proto`)
-end
-include(results_dir * "/gerrymander_pb.jl")
+include(AbstractString(dirname(@__FILE__)) * "/common.jl")
 
 # Import county geography graph
 println("Importing county geography graph...")
@@ -120,4 +102,4 @@ ubvec[1] = balance_tolerance
 objval, part = partGraphKway(adj, num_partitions,
                              adjwgt=true, vwgt=pops,
                              ubvec=ubvec, options=options)
-writedlm(parts_file, [ind_to_geoid part], '\t')
+writedlm(partition_file, [ind_to_geoid part], '\t')

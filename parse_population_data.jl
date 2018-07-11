@@ -2,24 +2,14 @@
 #
 # Parse county population data files
 #
-
 import JSON
-
-# Parameters
-# The radius of the Earth is computed with
-# https://rechneronline.de/earth-radius/ at the population center of
-# the U.S. (37.411764°N, 92.394544°W).
-project_dir      = chomp(readall(`git rev-parse --show-toplevel`)) * "/"
-download_dir     = project_dir * "/data/downloads/"
-results_dir      = project_dir * "/results/"
-county_data_file = results_dir * "/county_data.tsv"
-const earth_radius = 6370.286 # km
-const deg_to_rad   = pi / 180
+include(AbstractString(dirname(@__FILE__)) * "/common.jl")
 
 # Get state codes
 println("Parsing state codes...")
 (state_codes, _) = readdlm(project_dir * "/data/state_codes.tsv", '\t', header=true)
 #state_codes = [["California" "CA" 6]]
+#state_codes = [["Texas" "TX" 48]]
 
 # Import population and voting data
 # Note: Each county GEOID maps to the tuple:
@@ -37,6 +27,7 @@ end
 
 # Parse census block data for each state
 county_data = ["geoid" "pop" "dem_votes" "gop_votes" "pos_x" "pos_y" "pos_z" "pos_var"]
+const deg_to_rad   = pi / 180
 isdir(download_dir) || mkdir(download_dir) # Create directory if needed
 for row in 1:size(state_codes)[1]
     state_name   = state_codes[row, 1]

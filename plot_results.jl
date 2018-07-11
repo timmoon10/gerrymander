@@ -1,33 +1,17 @@
 #!/usr/bin/julia
-
+#
+# Plot county partition
+#
 using ProtoBuf
 import DataStructures
 using PyPlot
-
-# Parameters
-project_dir        = chomp(readall(`git rev-parse --show-toplevel`)) * "/"
-protoc             = "/home/moon/src/protobuf/src/protoc"
-results_dir        = project_dir * "/results/"
-parts_file         = results_dir * "/parts.tsv"
-county_bounds_file = results_dir * "/bounds.prototxt"
-image_file         = results_dir * "/parts.png"
-color_generator    = "/home/moon/src/randomcolor-py/getcolor.py"
-
-# Initialize protobuf
-println("Initializing protobuf...")
-isdir(results_dir) || mkdir(results_dir)
-if !isfile(results_dir * "/gerrymander_pb.jl")
-    run(`$protoc --plugin=$julia_protobuf_dir/plugin/protoc-gen-julia 
-         -I=$project_dir --julia_out=$results_dir
-         gerrymander.proto`)
-end
-include(results_dir * "/gerrymander_pb.jl")
+include(AbstractString(dirname(@__FILE__)) * "/common.jl")
 
 # Import partition data
 println("Reading partition data...")
 part_list = Dict{UInt32, UInt32}()
 num_parts = 0
-part_data = readdlm(parts_file, '\t')
+part_data = readdlm(partition_file, '\t')
 for row in 1:size(part_data, 1)
     geoid = UInt32(part_data[row, 1])
     part = UInt32(part_data[row, 2])
@@ -121,4 +105,3 @@ end
 PyPlot.axis("tight")
 PyPlot.axis("equal")
 PyPlot.savefig(image_file)
-PyPlot.show()
