@@ -20,7 +20,7 @@ county_bounds_file     = results_dir * "/bounds.prototxt"
 interaction_graph_file = results_dir * "/interaction_graph.prototxt"
 geography_graph_file   = results_dir * "/geography_graph.prototxt"
 partition_file         = results_dir * "/partition.tsv"
-image_file             = results_dir * "/parts.png"
+image_file             = results_dir * "/partition.png"
 
 # External dependencies
 protoc                 = "/home/moon/src/protobuf/src/protoc"

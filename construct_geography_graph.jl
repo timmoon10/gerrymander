@@ -27,7 +27,7 @@ for bounds_proto in bounds_list_proto.county_bounds
 
     for polygon_proto in bounds_proto.polygon
         num_coords = length(polygon_proto.x) - 1
-        for i = 1:num_coords
+        for i in 1:num_coords
 
             # Check if another county has encountered this segment
             # Note: If another county has seen it, then compute the
