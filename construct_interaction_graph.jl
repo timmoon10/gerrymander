@@ -5,7 +5,8 @@
 using Iterators
 import DataStructures
 using ProtoBuf
-include(AbstractString(dirname(@__FILE__)) * "/common.jl")
+include(dirname(@__FILE__) * "/common.jl")
+include(proto_file)
 
 # Import county population data
 println("Importing county population data...")

@@ -3,9 +3,11 @@
 # Plot county partition
 #
 using ProtoBuf
+using PyCall
 import DataStructures
 using PyPlot
-include(AbstractString(dirname(@__FILE__)) * "/common.jl")
+include(dirname(@__FILE__) * "/common.jl")
+include(proto_file)
 
 # Import partition data
 println("Reading partition data...")
@@ -21,9 +23,12 @@ end
 
 # Generate color scheme with https://github.com/kevinwuhoo/randomcolor-py
 println("Generating plot colors...")
+push!(PyVector(pyimport("sys")["path"]), project_dir * "/randomcolor-py")
+@pyimport randomcolor
 color_list = []
 for i = 1:num_parts
-    color_list = [color_list; chomp(readall(`$color_generator`))]
+    color = randomcolor.RandomColor()[:generate]()[1]
+    push!(color_list, color)
 end
 
 # Read boundary data from protobuf

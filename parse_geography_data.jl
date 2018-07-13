@@ -4,7 +4,8 @@
 #
 import JSON
 using ProtoBuf
-include(AbstractString(dirname(@__FILE__)) * "/common.jl")
+include(dirname(@__FILE__) * "/common.jl")
+include(proto_file)
 
 # Construct protobuf objects
 println("Initializing protobuf objects...")

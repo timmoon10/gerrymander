@@ -3,7 +3,7 @@
 # Parse county population data files
 #
 import JSON
-include(AbstractString(dirname(@__FILE__)) * "/common.jl")
+include(dirname(@__FILE__) * "/common.jl")
 
 # Get state codes
 println("Parsing state codes...")

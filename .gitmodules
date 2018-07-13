@@ -1,0 +1,3 @@
+[submodule "randomcolor-py"]
+	path = randomcolor-py
+	url = https://github.com/kevinwuhoo/randomcolor-py

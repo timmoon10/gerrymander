@@ -4,7 +4,8 @@
 #
 using ProtoBuf
 import DataStructures
-include(AbstractString(dirname(@__FILE__)) * "/common.jl")
+include(dirname(@__FILE__) * "/common.jl")
+include(proto_file)
 
 # Read boundary data from protobuf
 println("Reading boundary data...")

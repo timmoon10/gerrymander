@@ -5,7 +5,8 @@
 using ProtoBuf
 import DataStructures
 using Metis
-include(AbstractString(dirname(@__FILE__)) * "/common.jl")
+include(dirname(@__FILE__) * "/common.jl")
+include(proto_file)
 
 # Import county geography graph
 println("Importing county geography graph...")
