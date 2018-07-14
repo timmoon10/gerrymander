@@ -1,26 +1,32 @@
 syntax = "proto3";
 
-message CountyBoundariesList {
-  repeated CountyBoundaries county_bounds = 1;
+message MultiPolygonList {
+  repeated MultiPolygon multi_polygon = 1;
 }
 
-message CountyBoundaries {
-  uint32 geoid = 1;
+message MultiPolygon {
+  int64 id = 1;
   repeated Polygon polygon = 2;
 }
 
 message Polygon {
-  repeated float x = 1;
-  repeated float y = 2;
+  int64 id = 1;
+  Ring exterior_border = 2;
+  repeated Ring interior_border = 3;
+}
+
+message Ring {
+  repeated double x = 1;
+  repeated double y = 2;
 }
 
 message Graph {
-  repeated uint32 node = 1;
+  repeated int64 node = 1;
   repeated GraphEdge edge = 2;
 }
 
 message GraphEdge {
-  uint32 node1 = 1;
-  uint32 node2 = 2;
-  float weight = 3;
+  int64 node1 = 1;
+  int64 node2 = 2;
+  double weight = 3;
 }

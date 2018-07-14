@@ -1,80 +1,97 @@
 #!/usr/bin/julia
 #
-# Construct geography graph
+# Construct geography graph.
+# Nodes are geography regions and edges are border lengths.
 #
 using ProtoBuf
 import DataStructures
 include(dirname(@__FILE__) * "/common.jl")
 include(proto_file)
 
-# Read boundary data from protobuf
-println("Reading boundary data...")
-bounds_list_proto = CountyBoundariesList()
-open(county_bounds_file, "r") do f
-    readproto(f, bounds_list_proto)
+# Import geography data
+println("Importing geography data...")
+region_list_proto = MultiPolygonList()
+open(geography_data_file, "r") do f
+    readproto(f, region_list_proto)
 end
 
-# Construct county graph one county at a time
-println("Constructing county graph...")
-graph = Dict{UInt32, Dict{UInt32, Float32}}()
-county_list = DataStructures.list()
-segment_list = Dict{Tuple{Float32, Float32, Float32, Float32}, UInt32}()
-deg_to_rad = pi / 180
-for bounds_proto in bounds_list_proto.county_bounds
-    county = bounds_proto.geoid
-    county_list = DataStructures.cons(county, county_list)
-    neighbor_list = Dict{UInt32, Float32}()
+# Function to compute border lengths
+function update_border_lengths(id, border_proto,
+                               segment_owners, border_lengths)
+    const deg_to_rad = pi / 180
+    num_coords = length(border_proto.x) - 1
+    for i in 1:num_coords
+        x1 = border_proto.x[i]
+        y1 = border_proto.y[i]
+        x2 = border_proto.x[i+1]
+        y2 = border_proto.y[i+1]
 
-    for polygon_proto in bounds_proto.polygon
-        num_coords = length(polygon_proto.x) - 1
-        for i in 1:num_coords
-
-            # Check if another county has encountered this segment
-            # Note: If another county has seen it, then compute the
-            # segment length. Otherwise record the segment and wait
-            # for another county to encounter it.
-            x1 = polygon_proto.x[i]
-            y1 = polygon_proto.y[i]
-            x2 = polygon_proto.x[i+1]
-            y2 = polygon_proto.y[i+1]
-            if haskey(segment_list, (x1, y1, x2, y2))
-                # Compute length of boundary segment and record
-                # Note: haversine formula for great circle distance
-                neighbor = segment_list[(x1, y1, x2, y2)]
-                l1  = deg_to_rad * x1
-                ph1 = deg_to_rad * y1
-                l2  = deg_to_rad * x2
-                ph2 = deg_to_rad * y2
-                hav_angle = (sin((ph2-ph1)/2)^2
-                             + cos(ph1) * cos(ph2) * sin((l2-l1)/2)^2)
-                d = 2 * earth_radius * asin(sqrt(hav_angle))
-                if haskey(neighbor_list, neighbor)
-                    neighbor_list[neighbor] += d
-                else
-                    neighbor_list[neighbor] = d
-                end
+        # Check if this segment has already been encountered
+        # Note: If the segment has already been encountered, compute
+        # the segment length. Otherwise record the segment and wait
+        # for another region to encounter it.
+        if haskey(segment_owners, (x1, y1, x2, y2))
+            # Haversine formula for great circle distance
+            neighbor = segment_owners[(x1, y1, x2, y2)]
+            l1  = deg_to_rad * x1
+            ph1 = deg_to_rad * y1
+            l2  = deg_to_rad * x2
+            ph2 = deg_to_rad * y2
+            hav_angle = (sin((ph2-ph1)/2)^2
+                         + cos(ph1) * cos(ph2) * sin((l2-l1)/2)^2)
+            d = 2 * earth_radius * asin(sqrt(hav_angle))
+            if haskey(border_lengths, neighbor)
+                border_lengths[neighbor] += d
             else
-                # Add segment to list of encountered segments
-                segment_list[(x2, y2, x1, y1)] = county
+                border_lengths[neighbor] = d
             end
+        else
+            segment_owners[(x2, y2, x1, y1)] = id
+        end
+    end
+    return (segment_owners, border_lengths)
+end    
+
+# Construct geography graph
+println("Constructing geography graph...")
+graph = Dict{Int64, Dict{Int64, Float64}}()
+id_list = Vector{Int64}()
+segment_owners = Dict{Tuple{Float64, Float64, Float64, Float64}, Int64}()
+for region_proto in region_list_proto.multi_polygon
+    id = region_proto.id
+    push!(id_list, id)
+
+    # Compute border lengths
+    border_lengths = Dict{Int64, Float64}()
+    for polygon_proto in region_proto.polygon
+        (segment_owners, border_lengths) = update_border_lengths(id,
+                                                                 polygon_proto.exterior_border,
+                                                                 segment_owners,
+                                                                 border_lengths)
+        for border_proto in polygon_proto.interior_border
+            (segment_owners, border_lengths) = update_border_lengths(id,
+                                                                     border_proto,
+                                                                     segment_owners,
+                                                                     border_lengths)
+            
         end
     end
 
-    # Construct graph edges corresponding to current county
-    graph[county] = neighbor_list
-    for neighbor in keys(neighbor_list)
-        graph[neighbor][county] = neighbor_list[neighbor]
+    # Construct graph edges corresponding to current region
+    graph[id] = border_lengths
+    for neighbor in keys(border_lengths)
+        graph[neighbor][id] = border_lengths[neighbor]
     end
     
 end
 
 # BFS to find connected component of graph
-println("Breadth-first search on county graph...")
-search_start = county_list.head
+println("Breadth-first search on geography graph...")
+search_start = id_list[end]
 search_queue = DataStructures.list(search_start)
-is_connected = Dict{UInt32, Bool}()
-for county in county_list
-    is_connected[county] = false
+is_connected = Dict{Int64, Bool}()
+for id in id_list
+    is_connected[id] = false
 end
 is_connected[search_start] = true
 while !isempty(search_queue)
@@ -89,20 +106,20 @@ while !isempty(search_queue)
 end
 
 # Convert graph to protobuf format
-println("Converting county graph to protobuf...")
+println("Converting geography graph to protobuf...")
 graph_proto = Graph()
 fillset(graph_proto, :node)
 fillset(graph_proto, :edge)
-for county in county_list
-    if is_connected[county]
-        add_field!(graph_proto, :node, county)
-        neighbor_list = graph[county]
-        for neighbor in keys(neighbor_list)
-            if is_connected[neighbor] && county < neighbor
+for id in id_list
+    if is_connected[id]
+        add_field!(graph_proto, :node, id)
+        weights = graph[id]
+        for neighbor in keys(weights)
+            if is_connected[neighbor] && id < neighbor
                 edge_proto = GraphEdge()
-                set_field!(edge_proto, :node1, county)
+                set_field!(edge_proto, :node1, id)
                 set_field!(edge_proto, :node2, neighbor)
-                set_field!(edge_proto, :weight, neighbor_list[neighbor])
+                set_field!(edge_proto, :weight, weights[neighbor])
                 add_field!(graph_proto, :edge, edge_proto)
             end
         end
@@ -110,7 +127,7 @@ for county in county_list
 end
 
 # Write results to file
-println("Writing county geography graph to file...")
+println("Exporting geography graph...")
 open(geography_graph_file, "w") do f
     writeproto(f, graph_proto)
 end

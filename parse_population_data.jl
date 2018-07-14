@@ -49,7 +49,7 @@ for row in 1:size(state_codes)[1]
 
     # Parse JSON file
     println("Parsing census block data for " * state_name * "...")
-    sums = Dict{Int64, Array{Float64, 1}}()
+    sums = Dict{Int64, Vector{Float64}}()
     geoid_list = []
     for block_json in JSON.parsefile(json_file)["features"]
 

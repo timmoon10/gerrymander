@@ -2,9 +2,8 @@
 #
 # Construct county interaction matrix
 #
-using Iterators
+using Iterators, ProtoBuf
 import DataStructures
-using ProtoBuf
 include(dirname(@__FILE__) * "/common.jl")
 include(proto_file)
 
@@ -17,8 +16,8 @@ println("Constructing county interaction graph...")
 graph = Dict{Int64, Dict{Int64, Float64}}()
 geoid_list = DataStructures.list()
 binned_county_data = Dict{Tuple{Int64, Int64, Int64},
-                          Array{Tuple{Int64, Int64, Int64, Int64,
-                                      Float64, Float64, Float64, Float64}}}()
+                          Vector{Tuple{Int64, Int64, Int64, Int64,
+                                       Float64, Float64, Float64, Float64}}}()
 const personal_var = personal_stdev^2
 const max_dist2 = max_dist^2
 for row in 1:size(county_data, 1)
@@ -35,9 +34,9 @@ for row in 1:size(county_data, 1)
     var1       = Float64(county_data[row, 8])
 
     # Compute edge weights for counties in nearby bins
-    pos1 = [x1 y1 z1]
-    bins_min = Array{Int64}(floor((pos1 - max_dist) / bin_size))
-    bins_max = Array{Int64}(floor((pos1 + max_dist) / bin_size))
+    pos1 = [x1, y1, z1]
+    bins_min = floor(Int64, (pos1 - max_dist) / bin_size)
+    bins_max = floor(Int64, (pos1 + max_dist) / bin_size)
     for bin in Iterators.product(bins_min[1]:bins_max[1],
                                  bins_min[2]:bins_max[2],
                                  bins_min[3]:bins_max[3])
@@ -67,12 +66,12 @@ for row in 1:size(county_data, 1)
         graph[geoid2][geoid1] = edge_weights[geoid2]
     end
     geoid_list = DataStructures.cons(geoid1, geoid_list)
-    bin = (Int64(floor(x1 / bin_size)),
-           Int64(floor(y1 / bin_size)),
-           Int64(floor(z1 / bin_size)))
+    bin = (floor(Int64, x1 / bin_size),
+           floor(Int64, y1 / bin_size),
+           floor(Int64, z1 / bin_size))
     if !haskey(binned_county_data, bin)
-        binned_county_data[bin] = Array{Tuple{Int64, Int64, Int64, Int64,
-                                              Float64, Float64, Float64, Float64}}(0)
+        binned_county_data[bin] = Vector{Tuple{Int64, Int64, Int64, Int64,
+                                               Float64, Float64, Float64, Float64}}(0)
     end
     push!(binned_county_data[bin],
           (geoid1, pop1, dem_votes1, gop_votes1, x1, y1, z1, var1))
@@ -106,14 +105,14 @@ fillset(graph_proto, :node)
 fillset(graph_proto, :edge)
 for geoid in geoid_list
     if is_connected[geoid]
-        add_field!(graph_proto, :node, UInt32(geoid))
+        add_field!(graph_proto, :node, geoid)
         neighbor_list = graph[geoid]
         for neighbor in keys(neighbor_list)
             if is_connected[neighbor] && geoid < neighbor
                 edge_proto = GraphEdge()
-                set_field!(edge_proto, :node1, UInt32(geoid))
-                set_field!(edge_proto, :node2, UInt32(neighbor))
-                set_field!(edge_proto, :weight, Float32(neighbor_list[neighbor]))
+                set_field!(edge_proto, :node1, geoid)
+                set_field!(edge_proto, :node2, neighbor)
+                set_field!(edge_proto, :weight, neighbor_list[neighbor])
                 add_field!(graph_proto, :edge, edge_proto)
             end
         end
