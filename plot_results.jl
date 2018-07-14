@@ -2,32 +2,29 @@
 #
 # Plot partitions
 #
-using PyCall
 import ProtoBuf, LibGEOS, GeoInterface, PyPlot
 include(dirname(@__FILE__) * "/common.jl")
 include(proto_file)
 
-# Import partition data
-println("Importing partition data...")
-part_data = readdlm(partition_file, '\t')
-num_regions = size(part_data, 1)
-part_list = Dict{Int64, Int64}()
-num_parts = 0
-for row in 1:num_regions
-    geoid = Int64(part_data[row, 1])
-    part = Int64(part_data[row, 2])
-    part_list[geoid] = part
-    num_parts = max(part, num_parts)
-end
-
 # Generate color scheme
 println("Generating plot colors...")
-push!(PyCall.PyVector(pyimport("sys")["path"]), project_dir * "/randomcolor-py")
-@pyimport randomcolor
-color_list = []
-for i = 1:num_parts
-    color = randomcolor.RandomColor()[:generate]()[1]
-    push!(color_list, color)
+color_list = [(86,180,233), (213,94,0), (0,158,115), (240,228,66),
+                 (0,114,178), (204,121,167), (230,159,0)]
+color_list = [(r/256, g/256, b/256) for (r,g,b) in color_list]
+if length(color_list) < num_partitions
+    color_list = [color_list;
+                  rand(color_list, num_partitions - length(color_list))]
+end
+
+# Import partition data
+println("Importing partition data...")
+partition_data = readdlm(partition_file, '\t')
+num_regions = size(partition_data, 1)
+partition_list = Dict{Int64, Int64}()
+for row in 1:num_regions
+    geoid = Int64(partition_data[row, 1])
+    partition = Int64(partition_data[row, 2])
+    partition_list[geoid] = partition
 end
 
 # Read boundary data from protobuf
@@ -45,7 +42,7 @@ min_lat = 90.0
 max_lat = -90.0
 for region_proto in region_list_proto.multi_polygon
     id = region_proto.id
-    if haskey(part_list, id)
+    if haskey(partition_list, id)
         for polygon_proto in region_proto.polygon
             for long in polygon_proto.exterior_border.x
                 min_long = min(long, min_long)
@@ -83,10 +80,10 @@ region_shapes = Dict{Int64, LibGEOS.MultiPolygon}()
 partition_shapes = Dict{Int64, LibGEOS.GEOSGeom}()
 for region_proto in region_list_proto.multi_polygon
     id = region_proto.id
-    if !haskey(part_list, id)
+    if !haskey(partition_list, id)
         continue
     end
-    partition = part_list[id]
+    partition = partition_list[id]
 
     # Get region coordinates
     num_polygons = length(region_proto.polygon)
@@ -124,7 +121,7 @@ for region_proto in region_list_proto.multi_polygon
 end
 
 # Plot regions
-println("Plotting regions...")
+println("Plotting...")
 PyPlot.figure(figsize=(16, 16))
 PyPlot.axis("off")
 for (partition, shape) in partition_shapes
@@ -139,7 +136,7 @@ for (partition, shape) in partition_shapes
                                                   border_coords[i][2])
             end
             PyPlot.fill(x, y, color=color_list[partition])
-            PyPlot.plot(x, y, "k-", linewidth=4.0)
+            PyPlot.plot(x, y, "k-", linewidth=2.5)
         end
     end
 end
@@ -157,47 +154,6 @@ for (region, shape) in region_shapes
             PyPlot.plot(x, y, "k-", linewidth=0.5)
         end
     end
-end
-
-# Export image
-println("Exporting image...")
-PyPlot.axis("tight")
-PyPlot.axis("equal")
-PyPlot.savefig(image_file)
-
-exit()
-
-# Plot regions
-println("Plotting regions...")
-PyPlot.figure(figsize=(16, 16))
-PyPlot.axis("off")
-region_shapes = Dict{Int64, LibGEOS.MultiPolygon}()
-partition_shapes = Dict{Int64, LibGEOS.MultiPolygon}()
-
-
-for bounds_proto in bounds_list_proto.county_bounds
-    geoid = bounds_proto.geoid
-    if !haskey(part_list, geoid)
-        continue
-    end
-    part = part_list[geoid]
-    color = color_list[part]
-    for polygon_proto in bounds_proto.polygon
-        num_points = length(polygon_proto.x)
-        x = Vector{Float64}(num_points)
-        y = Vector{Float64}(num_points)
-        for i = 1:num_points
-            (x[i], y[i]) = lambert_projection(polygon_proto.x[i],
-                                              polygon_proto.y[i])
-        end
-        PyPlot.fill(x, y, color=color)
-        PyPlot.plot(x, y, "k-", linewidth=0.5)
-    end
-end
-for (long1, lat1, long2, lat2) in keys(exterior_segments)
-    (x1, y1) = lambert_projection(long1, lat1)
-    (x2, y2) = lambert_projection(long2, lat2)
-    PyPlot.plot([x1, x2], [y1, y2], "k-", linewidth=4.0)
 end
 
 # Export image

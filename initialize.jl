@@ -24,9 +24,5 @@ proto_file_dir = dirname(proto_file)
 run(`$protoc --plugin=$julia_protobuf_plugin -I=$project_dir
      --julia_out=$proto_file_dir $project_dir/gerrymander.proto`)
 
-# Download submodules
-println("Initializing Git submodules...")
-run(`git submodule update --init --recursive`)
-
 # Return to original directory
 cd(original_dir)
