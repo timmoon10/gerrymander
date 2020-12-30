@@ -1,9 +1,10 @@
 #!/usr/bin/julia
 
 # Project parameters
-const num_partitions      = 6
-const balance_tolerance   = 1.5
-const partisan_attraction = 8.0
+const num_partitions      = 5
+const force_contiguous    = false
+const balance_tolerance   = 1.2
+const partisan_attraction = 4.0
 const partisan_repulsion  = 8.0
 const personal_stdev      = 50.0     # km
 const max_dist            = 200.0    # km

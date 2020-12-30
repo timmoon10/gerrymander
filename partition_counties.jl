@@ -8,16 +8,18 @@ include(dirname(@__FILE__) * "/common.jl")
 include(proto_file)
 
 # Import county geography graph
-println("Importing county geography graph...")
-geography_graph_proto = Graph()
-open(geography_graph_file, "r") do f
-    readproto(f, geography_graph_proto)
-end
-geography_graph = Set{Tuple{Int64, Int64}}()
-for edge_proto in geography_graph_proto.edge
-    geoid1 = min(edge_proto.node1, edge_proto.node2)
-    geoid2 = max(edge_proto.node1, edge_proto.node2)
-    push!(geography_graph, (geoid1, geoid2))
+if force_contiguous
+    println("Importing county geography graph...")
+    geography_graph_proto = Graph()
+    open(geography_graph_file, "r") do f
+        readproto(f, geography_graph_proto)
+    end
+    geography_graph = Set{Tuple{Int64, Int64}}()
+    for edge_proto in geography_graph_proto.edge
+        geoid1 = min(edge_proto.node1, edge_proto.node2)
+        geoid2 = max(edge_proto.node1, edge_proto.node2)
+        push!(geography_graph, (geoid1, geoid2))
+    end
 end
 
 # Import county interaction graph
@@ -62,7 +64,7 @@ for edge_proto in interaction_graph_proto.edge
     # Check if counties are adjacent
     geoid1 = min(edge_proto.node1, edge_proto.node2)
     geoid2 = max(edge_proto.node1, edge_proto.node2)
-    if !in((geoid1, geoid2), geography_graph)
+    if force_contiguous && !in((geoid1, geoid2), geography_graph)
         continue
     end
         
