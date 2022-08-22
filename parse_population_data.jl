@@ -28,7 +28,7 @@ println("Parsing population and voting data...")
     header=true,
 )
 vote_data = Dict{Int64, Tuple{Int64, Int64, Int64}}()
-for row in 1:size(vote_table)[1]
+for row in 1:size(vote_table, 1)
     geoid = Int64(vote_table[row, 1])
     pop = Int64(vote_table[row, 6])
     dem_votes = Int64(vote_table[row, 3])
@@ -109,19 +109,19 @@ function compute_state_county_data(
 
     # Compute population, votes, and position of counties
     state_county_data = Array{Any, 2}(undef, length(sums), 8)
-    for (i, (geoid::Int64, county_sums::Array{Float64})) in enumerate(sums)
+    for (i, (geoid, county_sums)) in enumerate(sums)
         if !haskey(vote_data, geoid)
             println("GEOID " * string(geoid) * " not found in voting data")
         end
-        county_votes::Tuple{Int64, Int64, Int64} = vote_data[geoid]
-        pop::Float64 = county_sums[7]
-        x::Float64 = county_sums[1] / pop
-        y::Float64 = county_sums[2] / pop
-        z::Float64 = county_sums[3] / pop
-        var_x::Float64 = county_sums[4] / pop - x * x
-        var_y::Float64 = county_sums[5] / pop - y * y
-        var_z::Float64 = county_sums[6] / pop - z * z
-        var::Float64 = max(var_x + var_y + var_z, 0.0)
+        county_votes = vote_data[geoid]
+        pop = county_sums[7]
+        x = county_sums[1] / pop
+        y = county_sums[2] / pop
+        z = county_sums[3] / pop
+        var_x = county_sums[4] / pop - x * x
+        var_y = county_sums[5] / pop - y * y
+        var_z = county_sums[6] / pop - z * z
+        var = max(var_x + var_y + var_z, 0.0)
         state_county_data[i, 1] = geoid
         state_county_data[i, 2] = county_votes[1]
         state_county_data[i, 3] = county_votes[2]
@@ -137,7 +137,7 @@ end
 
 # Parse census block data for each state
 county_data = ["geoid" "pop" "dem_votes" "gop_votes" "pos_x" "pos_y" "pos_z" "pos_var"]
-for row in 1:size(state_codes)[1]
+for row in 1:size(state_codes, 1)
     state_name = state_codes[row, 1]
     state_abbrev = state_codes[row, 2]
     state_id = state_codes[row, 3]

@@ -30,12 +30,10 @@ regions = Dict{Int64, Vector{Vector{Array{Float64, 2}}}}()
 function parse_polygon(polygon_json::Vector{Any})::Vector{Array{Float64, 2}}
     polygon = Vector{Array{Float64, 2}}()
     for border_json::Vector{Any} in polygon_json
-        border = Array{Float64, 2}(
-            undef,
-            (2, size(border_json)[1]),
-        )
+        border = Array{Float64, 2}(undef, (2, length(border_json)))
         for (i, coord::Vector{Float64}) in enumerate(border_json)
-            border[:, i] = coord
+            border[1, i] = coord[1]
+            border[2, i] = coord[2]
         end
         push!(polygon, border)
     end
