@@ -8,7 +8,7 @@ import Serialization
 include(joinpath(dirname(@__FILE__), "common.jl"))
 
 # Options
-num_iters = 1
+num_iters = 20
 
 # Import interaction graph
 println("Importing interaction graph...")
@@ -100,23 +100,6 @@ end
 println("Importing partitions...")
 partition_data = PartitionData(partition_file, interaction_graph)
 
-function find_partition_neighbors(
-    partition::Int64,
-    partition_data::PartitionData,
-    geography_graph::Dict{Int64, Dict{Int64, Float64}},
-    )::Set{Int64}
-    partition_counties = partition_data.partition_to_counties[partition]
-    neighbors = Set{Int64}()
-    for county in partition_counties
-        for neighbor in keys(geography_graph[county])
-            if !in(neighbor, partition_counties)
-                push!(neighbors, neighbor)
-            end
-        end
-    end
-    return neighbors
-end
-
 function transfer_county_to_partition(
     county::Int64,
     new_partition::Int64,
@@ -161,11 +144,14 @@ function grow_partition(
     partition_counties = partition_data.partition_to_counties[partition]
 
     # Find counties adjacent to partition
-    neighbors = find_partition_neighbors(
-        partition,
-        partition_data,
-        geography_graph,
-    )
+    neighbors = Set{Int64}()
+    for county in partition_counties
+        for neighbor in keys(geography_graph[county])
+            if !in(neighbor, partition_counties)
+                push!(neighbors, neighbor)
+            end
+        end
+    end
 
     # Add counties until partition size reaches target
     while partition_populations[partition] < target_population
@@ -190,6 +176,60 @@ function grow_partition(
 
 end
 
+function shrink_partition(
+    target_population::Int64,
+    partition::Int64,
+    partition_data::PartitionData,
+    interaction_graph::Dict{Int64, Dict{Int64, Float64}},
+    geography_graph::Dict{Int64, Dict{Int64, Float64}},
+    )
+    partition_populations = partition_data.partition_populations
+    partition_affinities = partition_data.partition_affinities
+    county_to_partition = partition_data.county_to_partition
+    partition_counties = partition_data.partition_to_counties[partition]
+
+    # Find non-interior counties
+    boundary = Set{Int64}()
+    for county in partition_counties
+        if any(!in(neighbor, partition_counties)
+               for neighbor in keys(geography_graph[county]))
+            push!(boundary, county)
+        end
+    end
+
+    # Remove counties until partition size reaches target
+    while (partition_populations[partition] > target_population
+           && length(partition_counties) > 1)
+        affinities = SortedDict{Float64, Int64}(
+            partition_affinities[county][partition] => county
+            for county in boundary
+        )
+        (_, county) = first(affinities)
+        affinities = SortedDict{Float64, Int64}()
+        for neighbor in keys(geography_graph[county])
+            neighbor_partition = county_to_partition[neighbor]
+            if neighbor_partition != partition
+                affinity = partition_affinities[county][neighbor_partition]
+                affinities[affinity] = neighbor_partition
+            end
+        end
+        (_, new_partition) = last(affinities)
+        transfer_county_to_partition(
+            county,
+            new_partition,
+            partition_data,
+            interaction_graph,
+        )
+        delete!(boundary, county)
+        for neighbor in keys(geography_graph[county])
+            if in(neighbor, partition_counties)
+                push!(boundary, neighbor)
+            end
+        end
+    end
+
+end
+
 # Perform rebalancing steps
 println("Rebalancing partitions...")
 for iter in 1:num_iters
@@ -203,8 +243,18 @@ for iter in 1:num_iters
         pop => part
         for (part, pop) in partition_data.partition_populations
     )
-    partition = first(values(sorted_populations))
+    (_, partition) = first(sorted_populations)
     grow_partition(
+        target_population,
+        partition,
+        partition_data,
+        interaction_graph,
+        geography_graph,
+    )
+
+    # Shrink the largest partition
+    (_, partition) = last(sorted_populations)
+    shrink_partition(
         target_population,
         partition,
         partition_data,
