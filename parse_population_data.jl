@@ -45,7 +45,6 @@ function compute_state_county_data(
 
     # Constants
     deg_to_rad::Float64 = pi / 180
-    earth_radius::Float64 = 6370.286 # km (computed at (37.411764°N, 92.394544°W))
 
     # Parse JSON file to get position and population of census blocks
     sums = Dict{Int64, Array{Float64}}()

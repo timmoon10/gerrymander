@@ -1,10 +1,23 @@
 #
 # Parse geography data files
 #
+import DelimitedFiles
 import Downloads
 import JSON
 import Serialization
 include(joinpath(dirname(@__FILE__), "common.jl"))
+
+# Import county data
+println("Importing county data...")
+(county_data, _) = DelimitedFiles.readdlm(
+    county_data_file,
+    '\t',
+    header=true,
+)
+id_set = Set{Int64}()
+for row in 1:size(county_data, 1)
+    push!(id_set, county_data[row, 1])
+end
 
 # Download shapefile and generate JSON file, if needed
 file_base = "tl_2010_us_county10"
@@ -44,6 +57,9 @@ end
 println("Parsing geography data...")
 for region_json in JSON.parsefile(json_file)["features"]
     id = parse(Int64, region_json["properties"]["GEOID10"])
+    if !in(id, id_set)
+        continue
+    end
     geometry_type = region_json["geometry"]["type"]
     regions[id] = Vector{Vector{Array{Float64, 2}}}()
     if geometry_type == "Polygon"
