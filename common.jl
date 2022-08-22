@@ -10,4 +10,10 @@ partition_file = joinpath(results_dir, "partition.tsv")
 image_file = joinpath(results_dir, "partition.png")
 
 # Constants
+const relaxation_steps::Int64 = 100
+const partisan_attraction::Float64 = 1.0
+const partisan_repulsion::Float64 = 1.0
+const personal_stdev::Float64 = 50.0 # km
+const max_dist::Float64 = 200.0 # km
+const bin_size::Float64 = 25.0 # km
 const earth_radius::Float64 = 6370.286 # km (computed at (37.411764°N, 92.394544°W))

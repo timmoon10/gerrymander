@@ -7,9 +7,6 @@ import DelimitedFiles
 import Serialization
 include(joinpath(dirname(@__FILE__), "common.jl"))
 
-# Options
-num_iters = 20
-
 # Import interaction graph
 println("Importing interaction graph...")
 interaction_graph = Serialization.deserialize(interaction_graph_file)
@@ -232,7 +229,7 @@ end
 
 # Perform rebalancing steps
 println("Rebalancing partitions...")
-for iter in 1:num_iters
+for iter in 1:relaxation_steps
 
     # Aim to evenly divide population between partitions
     target_population = total_population / length(partition_data.partitions)
@@ -253,6 +250,10 @@ for iter in 1:num_iters
     )
 
     # Shrink the largest partition
+    sorted_populations = SortedDict{Int64, Int64}(
+        pop => part
+        for (part, pop) in partition_data.partition_populations
+    )
     (_, partition) = last(sorted_populations)
     shrink_partition(
         target_population,

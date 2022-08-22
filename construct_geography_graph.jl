@@ -2,9 +2,9 @@
 # Construct geography graph.
 # Nodes are geography regions and edges are border lengths.
 #
-import DataStructures
 import Serialization
 include(joinpath(dirname(@__FILE__), "common.jl"))
+include(joinpath(project_dir, "graph.jl"))
 
 # Import geography data
 println("Importing geography data...")
@@ -78,35 +78,17 @@ end
 println("Constructing geography graph...")
 graph = make_geography_graph(regions)
 
-# Function to find connected component of graph with BFS
-function find_connected(
-    graph::Dict{Int64, Dict{Int64, Float64}},
-    search_start::Int64,
-    )::Dict{Int64, Bool}
-    is_connected = Dict{Int64, Bool}(id => false for id in keys(graph))
-    is_connected[search_start] = true
-    search_queue = DataStructures.Queue{Int64}()
-    DataStructures.enqueue!(search_queue, search_start)
-    while !isempty(search_queue)
-        current = DataStructures.dequeue!(search_queue)
-        for neighbor in keys(graph[current])
-            if !is_connected[neighbor]
-                DataStructures.enqueue!(search_queue, neighbor)
-                is_connected[neighbor] = true
-            end
-        end
-    end
-    return is_connected
-end
-
 # Remove unconnected components of graph
 println("Removing unconnected components of geography graph...")
 search_start = minimum(keys(graph))
 is_connected = find_connected(graph, search_start)
 if !all(values(is_connected))
-    println("Graph is unconnected!")
+    println("Geography graph is unconnected!")
     graph = Dict{Int64, Dict{Int64, Float64}}(
-        id => neighbors for (id, neighbors) in graph if is_connected[id])
+        id => neighbors
+        for (id, neighbors) in graph
+        if is_connected[id]
+    )
 end
 
 # Write results to file
