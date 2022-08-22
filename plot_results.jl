@@ -17,7 +17,7 @@ for row in 1:size(partition_data, 1)
     partition = partition_data[row, 2]
     partitions[geoid] = partition
 end
-num_partitions = maximum(values(partitions)) + 1
+max_partition = maximum(values(partitions))
 
 # Generate color scheme
 println("Generating plot colors...")
@@ -26,10 +26,10 @@ color_list = [
     (0,114,178), (204,121,167), (230,159,0),
 ]
 color_list = [(r/256, g/256, b/256) for (r,g,b) in color_list]
-while length(color_list) < num_partitions
+while length(color_list) < max_partition
     append!(color_list, color_list)
 end
-color_list = color_list[1:num_partitions]
+color_list = color_list[1:max_partition]
 
 # Read boundary data from file
 println("Importing geography data...")
@@ -190,7 +190,7 @@ for (partition, shape) in partition_shapes
             plot_coords = lambert_projection(border_coords)
             x = plot_coords[1,:]
             y = plot_coords[2,:]
-            PyPlot.fill(x, y, color=color_list[partition+1])
+            PyPlot.fill(x, y, color=color_list[partition])
             PyPlot.plot(x, y, "k-", linewidth=2.5)
         end
     end

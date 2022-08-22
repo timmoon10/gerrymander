@@ -5,7 +5,9 @@ import DataStructures
 using DataStructures: DefaultDict, SortedDict
 import DelimitedFiles
 import Serialization
+import StatsBase
 include(joinpath(dirname(@__FILE__), "common.jl"))
+include(joinpath(project_dir, "graph.jl"))
 
 # Import interaction graph
 println("Importing interaction graph...")
@@ -129,6 +131,43 @@ function transfer_county_to_partition(
 
 end
 
+function split_partitions_if_disconnected(
+    partition::Int64,
+    partition_data::PartitionData,
+    interaction_graph::Dict{Int64, Dict{Int64, Float64}},
+    geography_graph::Dict{Int64, Dict{Int64, Float64}},
+    )
+    partition_counties = partition_data.partition_to_counties[partition]
+    partition_graph = construct_subgraph(
+        geography_graph,
+        partition_counties,
+    )
+    connected_counties = find_connected_vertices(
+        partition_graph,
+        first(partition_counties),
+    )
+    while length(connected_counties) != length(partition_counties)
+        new_partition = maximum(partition_data.partitions) + 1
+        push!(partition_data.partitions, new_partition)
+        for county in connected_counties
+            transfer_county_to_partition(
+                county,
+                new_partition,
+                partition_data,
+                interaction_graph,
+            )
+        end
+        partition_graph = construct_subgraph(
+            partition_graph,
+            partition_counties,
+        )
+        connected_counties = find_connected_vertices(
+            partition_graph,
+            first(partition_counties),
+        )
+    end
+end
+
 function grow_partition(
     target_population::Int64,
     partition::Int64,
@@ -232,36 +271,46 @@ println("Rebalancing partitions...")
 for iter in 1:relaxation_steps
 
     # Aim to evenly divide population between partitions
-    target_population = total_population / length(partition_data.partitions)
+    target_population = total_population / num_partitions
     target_population = round(Int64, target_population)
 
-    # Grow the smallest partition
-    sorted_populations = SortedDict{Int64, Int64}(
-        pop => part
-        for (part, pop) in partition_data.partition_populations
-    )
-    (_, partition) = first(sorted_populations)
-    grow_partition(
-        target_population,
-        partition,
-        partition_data,
-        interaction_graph,
-        geography_graph,
-    )
+    # Randomly pick partition to adjust
+    partition_populations = partition_data.partition_populations
+    partitions = collect(partition_data.partitions)
+    diffs = [
+        abs(partition_populations[partition] - target_population)
+        for partition in partitions
+    ]
+    partition = StatsBase.sample(partitions, StatsBase.Weights(diffs))
 
-    # Shrink the largest partition
-    sorted_populations = SortedDict{Int64, Int64}(
-        pop => part
-        for (part, pop) in partition_data.partition_populations
-    )
-    (_, partition) = last(sorted_populations)
-    shrink_partition(
-        target_population,
-        partition,
-        partition_data,
-        interaction_graph,
-        geography_graph,
-    )
+    # Grow or shrink partition to achieve target population
+    if partition_populations[partition] < target_population
+        grow_partition(
+            target_population,
+            partition,
+            partition_data,
+            interaction_graph,
+            geography_graph,
+        )
+    else
+        shrink_partition(
+            target_population,
+            partition,
+            partition_data,
+            interaction_graph,
+            geography_graph,
+        )
+    end
+
+    # Split any disconnected partitions
+    for partition in collect(partition_data.partitions)
+        split_partitions_if_disconnected(
+            partition,
+            partition_data,
+            interaction_graph,
+            geography_graph,
+        )
+    end
 
 end
 

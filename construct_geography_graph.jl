@@ -81,14 +81,10 @@ graph = make_geography_graph(regions)
 # Remove unconnected components of graph
 println("Removing unconnected components of geography graph...")
 search_start = minimum(keys(graph))
-is_connected = find_connected(graph, search_start)
-if !all(values(is_connected))
+connected_ids = find_connected_vertices(graph, search_start)
+if length(connected_ids) != length(graph)
     println("Geography graph is unconnected!")
-    graph = Dict{Int64, Dict{Int64, Float64}}(
-        id => neighbors
-        for (id, neighbors) in graph
-        if is_connected[id]
-    )
+    graph = construct_subgraph(graph, connected_ids)
 end
 
 # Write results to file
