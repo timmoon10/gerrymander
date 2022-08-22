@@ -4,6 +4,7 @@
 import DataStructures
 using DataStructures: DefaultDict, SortedDict
 import DelimitedFiles
+import Printf
 import Serialization
 import StatsBase
 include(joinpath(dirname(@__FILE__), "common.jl"))
@@ -191,11 +192,12 @@ function grow_partition(
 
     # Add counties until partition size reaches target
     while partition_populations[partition] < target_population
-        neighbor_affinities = SortedDict{Float64, Int64}(
-            partition_affinities[neighbor][partition] => neighbor
-            for neighbor in neighbors
-        )
-        (_, county) = last(neighbor_affinities)
+        neighbors_collect = collect(neighbors)
+        sample_weights = StatsBase.Weights([
+            partition_affinities[neighbor][partition]
+            for neighbor in neighbors_collect
+        ])
+        county = StatsBase.sample(neighbors_collect, sample_weights)
         transfer_county_to_partition(
             county,
             partition,
@@ -236,20 +238,26 @@ function shrink_partition(
     # Remove counties until partition size reaches target
     while (partition_populations[partition] > target_population
            && length(partition_counties) > 1)
-        affinities = SortedDict{Float64, Int64}(
-            partition_affinities[county][partition] => county
-            for county in boundary
+        boundary_collect = collect(boundary)
+        sample_weights = StatsBase.Weights([
+            1 / partition_affinities[county][partition]
+            for county in boundary_collect
+        ])
+        county = StatsBase.sample(boundary_collect, sample_weights)
+        neighbor_partitions = Set{Int64}(
+            county_to_partition[neighbor]
+            for neighbor in keys(geography_graph[county])
         )
-        (_, county) = first(affinities)
-        affinities = SortedDict{Float64, Int64}()
-        for neighbor in keys(geography_graph[county])
-            neighbor_partition = county_to_partition[neighbor]
-            if neighbor_partition != partition
-                affinity = partition_affinities[county][neighbor_partition]
-                affinities[affinity] = neighbor_partition
-            end
-        end
-        (_, new_partition) = last(affinities)
+        delete!(neighbor_partitions, partition)
+        neighbor_partitions_collect = collect(neighbor_partitions)
+        sample_weights = StatsBase.Weights([
+            partition_affinities[county][neighbor_partition]
+            for neighbor_partition in neighbor_partitions_collect
+        ])
+        new_partition = StatsBase.sample(
+            neighbor_partitions_collect,
+            sample_weights,
+        )
         transfer_county_to_partition(
             county,
             new_partition,
@@ -277,11 +285,11 @@ for iter in 1:relaxation_steps
     # Randomly pick partition to adjust
     partition_populations = partition_data.partition_populations
     partitions = collect(partition_data.partitions)
-    diffs = [
+    sample_weights = StatsBase.Weights([
         abs(partition_populations[partition] - target_population)
         for partition in partitions
-    ]
-    partition = StatsBase.sample(partitions, StatsBase.Weights(diffs))
+    ])
+    partition = StatsBase.sample(partitions, sample_weights)
 
     # Grow or shrink partition to achieve target population
     if partition_populations[partition] < target_population
@@ -312,6 +320,12 @@ for iter in 1:relaxation_steps
         )
     end
 
+end
+
+# Print partition populations
+println("Partition populations...")
+for (partition, population) in partition_data.partition_populations
+    @Printf.printf("Partition %d: %d\n", partition, population)
 end
 
 # Output results to file
