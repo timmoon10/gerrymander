@@ -32,14 +32,21 @@ for row in 1:size(county_data, 1)
     global total_population += population
 end
 
-# Import partition data
-println("Importing partitions...")
-partition_data = DelimitedFiles.readdlm(partition_file, '\t')
+# Initialize partitions
 county_to_partition = Dict{Int64, Int64}()
-for row in 1:size(partition_data, 1)
-    county = partition_data[row, 1]
-    partition = partition_data[row, 2]
-    county_to_partition[county] = partition
+if isfile(partition_file)
+    println("Initializing with imported partitions...")
+    partition_data = DelimitedFiles.readdlm(partition_file, '\t')
+    for row in 1:size(partition_data, 1)
+        county = partition_data[row, 1]
+        partition = partition_data[row, 2]
+        county_to_partition[county] = partition
+    end
+else
+    println("Initializing with trivial partition...")
+    for county in keys(geography_graph)
+        county_to_partition[county] = 1
+    end
 end
 partition_data = PartitionData(
     interaction_graph,
@@ -63,24 +70,41 @@ for iter in 1:relaxation_steps
         for partition in partitions
     ])
     partition = StatsBase.sample(partitions, sample_weights)
+    population = partition_populations[partition]
 
-    # Grow or shrink partition to achieve target population
-    if partition_populations[partition] < target_population
-        grow_partition(
-            target_population,
-            partition,
-            partition_data,
-        )
+    # Manipulate partitions to achieve target population
+    if population <= target_population
+        if rand() > population / target_population
+            # Destroy partition if very small
+            shrink_partition(0, partition, partition_data)
+            println("Destroy!")
+        else
+            # Grow partition if somewhat small
+            grow_partition(target_population, partition, partition_data)
+            println("Grow!")
+        end
     else
-        shrink_partition(
-            target_population,
-            partition,
-            partition_data,
-        )
+        if (length(partitions) == 1
+            || rand() > target_population / population)
+            # Schism partition if very large
+            schism_partition(partition, partition_data)
+            println("Schism!")
+        else
+            # Shrink partition if somewhat large
+            shrink_partition(target_population, partition, partition_data)
+            println("Shrink!")
+        end
     end
 
     # Split any disconnected partitions
     split_disconnected_partitions(partition_data)
+
+    # Update affinities
+    update_partition_affinities(
+        partition_data.partition_affinities,
+        partition_data.interaction_graph,
+        partition_data.county_to_partition,
+    )
 
 end
 

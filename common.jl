@@ -10,7 +10,7 @@ partition_file = joinpath(results_dir, "partition.tsv")
 image_file = joinpath(results_dir, "partition.png")
 
 # Constants
-const num_partitions::Int64 = 2
+const num_partitions::Int64 = 6
 const relaxation_steps::Int64 = 100
 const partisan_attraction::Float64 = 0.0
 const partisan_repulsion::Float64 = 0.0

@@ -7,14 +7,15 @@ include(joinpath(dirname(@__FILE__), "common.jl"))
 include(joinpath(project_dir, "graph.jl"))
 
 # Function to compute affinity of each county to each partition
-function compute_partition_affinities(
+function update_partition_affinities(
+    partition_affinities::Dict{Int64, DefaultDict{Int64, Float64}},
     interaction_graph::Dict{Int64, Dict{Int64, Float64}},
     county_to_partition::Dict{Int64, Int64},
     )::Dict{Int64, DefaultDict{Int64, Float64}}
-    partition_affinities = Dict{Int64, DefaultDict{Int64, Float64}}(
-        county => DefaultDict{Int64, Float64}(0.0)
-        for county in keys(interaction_graph)
-    )
+    empty!(partition_affinities)
+    for county in keys(interaction_graph)
+        partition_affinities[county] = DefaultDict{Int64, Float64}(0.0)
+    end
     for (county, neighborhood) in interaction_graph
         for (neighbor, affinity) in neighborhood
             partition = county_to_partition[neighbor]
@@ -51,7 +52,9 @@ function PartitionData(
     end
 
     # Compute affinity between counties and partitions
-    partition_affinities = compute_partition_affinities(
+    partition_affinities = Dict{Int64, DefaultDict{Int64, Float64}}()
+    update_partition_affinities(
+        partition_affinities,
         interaction_graph,
         county_to_partition,
     )
@@ -82,6 +85,7 @@ function transfer_county_to_partition(
     old_partition = county_to_partition[county]
 
     # Transfer county
+    push!(partitions, new_partition)
     county_to_partition[county] = new_partition
     delete!(partition_to_counties[old_partition], county)
     push!(partition_to_counties[new_partition], county)
@@ -105,6 +109,8 @@ function transfer_county_to_partition(
 
 end
 
+# Take weakly-held counties from neighbors until target population is
+# reached
 function grow_partition(
     target_population::Int64,
     partition::Int64,
@@ -156,6 +162,8 @@ function grow_partition(
 
 end
 
+# Give weakly-held counties to neighbors until target population is
+# reached
 function shrink_partition(
     target_population::Int64,
     partition::Int64,
@@ -228,6 +236,7 @@ function shrink_partition(
 
 end
 
+# Divide disconnected partitions into separate partitions
 function split_disconnected_partitions(
     partition_data::PartitionData,
     )
@@ -266,5 +275,39 @@ function split_disconnected_partitions(
             )
         end
     end
+
+end
+
+# Create a new partition from within and grow
+function schism_partition(
+    partition::Int64,
+    partition_data::PartitionData,
+    )
+    partitions = partition_data.partitions
+    partition_counties = partition_data.partition_to_counties[partition]
+    partition_population = partition_data.partition_populations[partition]
+    partition_affinities = partition_data.partition_affinities
+    new_partition = maximum(partitions) + 1
+    target_population = round(Int64, partition_population / 2)
+
+    # Choose county to eject
+    counties_collect = collect(partition_counties)
+    sample_weights = StatsBase.Weights([
+        partition_affinities[county][partition]
+        for county in counties_collect
+    ])
+    county = StatsBase.sample(counties_collect, sample_weights)
+
+    # Grow partition from ejected county
+    transfer_county_to_partition(
+        county,
+        new_partition,
+        partition_data,
+    )
+    grow_partition(
+        target_population,
+        new_partition,
+        partition_data,
+    )
 
 end
