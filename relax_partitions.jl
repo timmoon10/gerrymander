@@ -77,22 +77,18 @@ for iter in 1:relaxation_steps
         if rand() > population / target_population
             # Destroy partition if very small
             shrink_partition(0, partition, partition_data)
-            println("Destroy!")
         else
             # Grow partition if somewhat small
             grow_partition(target_population, partition, partition_data)
-            println("Grow!")
         end
     else
         if (length(partitions) == 1
             || rand() > target_population / population)
             # Schism partition if very large
             schism_partition(partition, partition_data)
-            println("Schism!")
         else
             # Shrink partition if somewhat large
             shrink_partition(target_population, partition, partition_data)
-            println("Shrink!")
         end
     end
 

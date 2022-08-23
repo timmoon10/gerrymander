@@ -2,7 +2,7 @@ Name	Alpha code	Numeric code
 # Alabama	AL	1
 # Arizona	AZ	4
 # Arkansas	AR	5
-# California	CA	6
+California	CA	6
 # Colorado	CO	8
 # Connecticut	CT	9
 # Delaware	DE	10
@@ -27,7 +27,7 @@ Name	Alpha code	Numeric code
 # Nebraska	NE	31
 # Nevada	NV	32
 # New Hampshire	NH	33
-New Jersey	NJ	34
+# New Jersey	NJ	34
 # New Mexico	NM	35
 # New York	NY	36
 # North Carolina	NC	37
