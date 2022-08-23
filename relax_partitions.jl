@@ -74,7 +74,8 @@ for iter in 1:relaxation_steps
 
     # Manipulate partitions to achieve target population
     if population <= target_population
-        if rand() > population / target_population
+        ratio = population / target_population
+        if ratio < 0.25 && rand() > 4*ratio
             # Destroy partition if very small
             shrink_partition(0, partition, partition_data)
         else
@@ -82,13 +83,16 @@ for iter in 1:relaxation_steps
             grow_partition(target_population, partition, partition_data)
         end
     else
-        if (length(partitions) == 1
-            || rand() > target_population / population)
-            # Schism partition if very large
-            schism_partition(partition, partition_data)
-        else
-            # Shrink partition if somewhat large
-            shrink_partition(target_population, partition, partition_data)
+        ratio = target_population / population
+        if length(partition_data.partition_to_counties[partition]) > 1
+            if (length(partitions) == 1
+                || (ratio < 0.5 && rand() > 2*ratio))
+                # Schism partition if very large
+                schism_partition(partition, partition_data)
+            else
+                # Shrink partition if somewhat large
+                shrink_partition(target_population, partition, partition_data)
+            end
         end
     end
 
