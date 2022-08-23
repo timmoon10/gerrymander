@@ -54,6 +54,8 @@ end
 
 # Helper struct to store partition assignments
 struct PartitionData
+    interaction_graph::Dict{Int64, Dict{Int64, Float64}}
+    geography_graph::Dict{Int64, Dict{Int64, Float64}}
     partitions::Set{Int64}
     county_to_partition::Dict{Int64, Int64}
     partition_to_counties::DefaultDict{Int64, Set{Int64}}
@@ -61,21 +63,17 @@ struct PartitionData
     partition_affinities::Dict{Int64, DefaultDict{Int64, Float64}} # county -> part -> affinity
 end
 function PartitionData(
-    partition_file::String,
     interaction_graph::Dict{Int64, Dict{Int64, Float64}},
+    geography_graph::Dict{Int64, Dict{Int64, Float64}},
+    county_to_partition::Dict{Int64, Int64},
     )::PartitionData
 
     # Load initial partition
-    partition_data = DelimitedFiles.readdlm(partition_file, '\t')
     partitions = Set{Int64}()
-    county_to_partition = Dict{Int64, Int64}()
     partition_to_counties = DefaultDict{Int64, Set{Int64}}(Set{Int64})
     partition_populations = DefaultDict{Int64, Int64}(0)
-    for row in 1:size(partition_data, 1)
-        county = partition_data[row, 1]
-        partition = partition_data[row, 2]
+    for (county, partition) in county_to_partition
         push!(partitions, partition)
-        county_to_partition[county] = partition
         push!(partition_to_counties[partition], county)
         partition_populations[partition] += populations[county]
     end
@@ -87,6 +85,8 @@ function PartitionData(
     )
 
     return PartitionData(
+        interaction_graph,
+        geography_graph,
         partitions,
         county_to_partition,
         partition_to_counties,
@@ -98,93 +98,72 @@ end
 
 # Import partition data
 println("Importing partitions...")
-partition_data = PartitionData(partition_file, interaction_graph)
+partition_data = DelimitedFiles.readdlm(partition_file, '\t')
+county_to_partition = Dict{Int64, Int64}()
+for row in 1:size(partition_data, 1)
+    county = partition_data[row, 1]
+    partition = partition_data[row, 2]
+    county_to_partition[county] = partition
+end
+partition_data = PartitionData(
+    interaction_graph,
+    geography_graph,
+    county_to_partition,
+)
 
 function transfer_county_to_partition(
     county::Int64,
     new_partition::Int64,
     partition_data::PartitionData,
-    interaction_graph::Dict{Int64, Dict{Int64, Float64}},
     )
-    old_partition = partition_data.county_to_partition[county]
+    interaction_graph = partition_data.interaction_graph
+    partitions = partition_data.partitions
+    county_to_partition = partition_data.county_to_partition
+    partition_to_counties = partition_data.partition_to_counties
+    partition_populations = partition_data.partition_populations
+    partition_affinities = partition_data.partition_affinities
+    old_partition = county_to_partition[county]
 
     # Transfer county
-    partition_data.county_to_partition[county] = new_partition
-    delete!(partition_data.partition_to_counties[old_partition], county)
-    push!(partition_data.partition_to_counties[new_partition], county)
+    county_to_partition[county] = new_partition
+    delete!(partition_to_counties[old_partition], county)
+    push!(partition_to_counties[new_partition], county)
 
     # Transfer population
-    partition_data.partition_populations[old_partition] -= populations[county]
-    partition_data.partition_populations[new_partition] += populations[county]
+    partition_populations[old_partition] -= populations[county]
+    partition_populations[new_partition] += populations[county]
 
     # Transfer affinity
     for (neighbor, affinity) in interaction_graph[county]
-        partition_data.partition_affinities[neighbor][old_partition] -= affinity
-        partition_data.partition_affinities[neighbor][new_partition] += affinity
+        partition_affinities[neighbor][old_partition] -= affinity
+        partition_affinities[neighbor][new_partition] += affinity
     end
 
     # Remove old partition if empty
-    if isempty(partition_data.partition_to_counties[old_partition])
-        delete!(partition_data.partitions, old_partition)
-        delete!(partition_data.partition_to_counties, old_partition)
-        delete!(partition_data.partition_populations, old_partition)
+    if isempty(partition_to_counties[old_partition])
+        delete!(partitions, old_partition)
+        delete!(partition_to_counties, old_partition)
+        delete!(partition_populations, old_partition)
     end
 
-end
-
-function split_partitions_if_disconnected(
-    partition::Int64,
-    partition_data::PartitionData,
-    interaction_graph::Dict{Int64, Dict{Int64, Float64}},
-    geography_graph::Dict{Int64, Dict{Int64, Float64}},
-    )
-    partition_counties = partition_data.partition_to_counties[partition]
-    partition_graph = construct_subgraph(
-        geography_graph,
-        partition_counties,
-    )
-    connected_counties = find_connected_vertices(
-        partition_graph,
-        first(partition_counties),
-    )
-    while length(connected_counties) != length(partition_counties)
-        new_partition = maximum(partition_data.partitions) + 1
-        push!(partition_data.partitions, new_partition)
-        for county in connected_counties
-            transfer_county_to_partition(
-                county,
-                new_partition,
-                partition_data,
-                interaction_graph,
-            )
-        end
-        partition_graph = construct_subgraph(
-            partition_graph,
-            partition_counties,
-        )
-        connected_counties = find_connected_vertices(
-            partition_graph,
-            first(partition_counties),
-        )
-    end
 end
 
 function grow_partition(
     target_population::Int64,
     partition::Int64,
     partition_data::PartitionData,
-    interaction_graph::Dict{Int64, Dict{Int64, Float64}},
-    geography_graph::Dict{Int64, Dict{Int64, Float64}},
     )
+    geography_graph = partition_data.geography_graph
+    county_to_partition = partition_data.county_to_partition
+    partition_to_counties = partition_data.partition_to_counties
     partition_populations = partition_data.partition_populations
     partition_affinities = partition_data.partition_affinities
-    partition_counties = partition_data.partition_to_counties[partition]
 
     # Find counties adjacent to partition
     neighbors = Set{Int64}()
-    for county in partition_counties
+    for county in partition_to_counties[partition]
         for neighbor in keys(geography_graph[county])
-            if !in(neighbor, partition_counties)
+            if !in(neighbor, partition_to_counties[partition])
                 push!(neighbors, neighbor)
             end
         end
@@ -192,24 +171,30 @@ function grow_partition(
 
     # Add counties until partition size reaches target
     while partition_populations[partition] < target_population
+
+        # Choose county to take
         neighbors_collect = collect(neighbors)
         sample_weights = StatsBase.Weights([
-            partition_affinities[neighbor][partition]
+            1 / partition_affinities[neighbor][county_to_partition[neighbor]]
             for neighbor in neighbors_collect
         ])
         county = StatsBase.sample(neighbors_collect, sample_weights)
+
+        # Transfer county to partition
         transfer_county_to_partition(
             county,
             partition,
             partition_data,
-            interaction_graph,
         )
+
+        # Update list of adjacent counties
         delete!(neighbors, county)
         for neighbor in keys(geography_graph[county])
-            if !in(neighbor, partition_counties)
+            if !in(neighbor, partition_to_counties[partition])
                 push!(neighbors, neighbor)
             end
         end
+
     end
 
 end
@@ -218,9 +203,9 @@ function shrink_partition(
     target_population::Int64,
     partition::Int64,
     partition_data::PartitionData,
-    interaction_graph::Dict{Int64, Dict{Int64, Float64}},
-    geography_graph::Dict{Int64, Dict{Int64, Float64}},
     )
+    geography_graph = partition_data.geography_graph
+    partitions = partition_data.partitions
     partition_populations = partition_data.partition_populations
     partition_affinities = partition_data.partition_affinities
     county_to_partition = partition_data.county_to_partition
@@ -236,14 +221,17 @@ function shrink_partition(
     end
 
     # Remove counties until partition size reaches target
-    while (partition_populations[partition] > target_population
-           && length(partition_counties) > 1)
+    while partition_populations[partition] > target_population
+
+        # Choose county to eject
         boundary_collect = collect(boundary)
         sample_weights = StatsBase.Weights([
             1 / partition_affinities[county][partition]
             for county in boundary_collect
         ])
         county = StatsBase.sample(boundary_collect, sample_weights)
+
+        # Choose partition to recieve county
         neighbor_partitions = Set{Int64}(
             county_to_partition[neighbor]
             for neighbor in keys(geography_graph[county])
@@ -258,17 +246,67 @@ function shrink_partition(
             neighbor_partitions_collect,
             sample_weights,
         )
+
+        # Transfer county to other partition
         transfer_county_to_partition(
             county,
             new_partition,
             partition_data,
-            interaction_graph,
         )
+
+        # Exit immediately if partition is empty
+        if !in(partition, partitions)
+            return
+        end
+
+        # Update list of non-interior counties
         delete!(boundary, county)
         for neighbor in keys(geography_graph[county])
             if in(neighbor, partition_counties)
                 push!(boundary, neighbor)
             end
+        end
+
+    end
+
+end
+
+function split_disconnected_partitions(
+    partition_data::PartitionData,
+    )
+    partitions = partition_data.partitions
+    partition_to_counties = partition_data.partition_to_counties
+    geography_graph = partition_data.geography_graph
+
+    for partition in collect(partitions)
+        partition_counties = copy(partition_to_counties[partition])
+        partition_graph = construct_subgraph(
+            geography_graph,
+            partition_counties,
+        )
+        connected_counties = find_connected_vertices(
+            partition_graph,
+            first(partition_counties),
+        )
+        while length(connected_counties) != length(partition_counties)
+            partition = maximum(partitions) + 1
+            push!(partitions, partition)
+            setdiff!(partition_counties, connected_counties)
+            for county in partition_counties
+                transfer_county_to_partition(
+                    county,
+                    partition,
+                    partition_data,
+                )
+            end
+            partition_graph = construct_subgraph(
+                partition_graph,
+                partition_counties,
+            )
+            connected_counties = find_connected_vertices(
+                partition_graph,
+                first(partition_counties),
+            )
         end
     end
 
@@ -297,28 +335,17 @@ for iter in 1:relaxation_steps
             target_population,
             partition,
             partition_data,
-            interaction_graph,
-            geography_graph,
         )
     else
         shrink_partition(
             target_population,
             partition,
             partition_data,
-            interaction_graph,
-            geography_graph,
         )
     end
 
     # Split any disconnected partitions
-    for partition in collect(partition_data.partitions)
-        split_partitions_if_disconnected(
-            partition,
-            partition_data,
-            interaction_graph,
-            geography_graph,
-        )
-    end
+    split_disconnected_partitions(partition_data)
 
 end
 
