@@ -137,11 +137,15 @@ function grow_partition(
 
         # Choose county to take
         neighbors_collect = collect(neighbors)
-        sample_weights = StatsBase.Weights([
-            1 / partition_affinities[neighbor][county_to_partition[neighbor]]
-            for neighbor in neighbors_collect
-        ])
-        county = StatsBase.sample(neighbors_collect, sample_weights)
+        weights = [
+            (
+                partition_affinities[county][partition]
+                - partition_affinities[county][county_to_partition[county]]
+            )
+            for county in neighbors_collect
+        ]
+        weights = StatsBase.Weights(exp.(StatsBase.zscore(weights)))
+        county = StatsBase.sample(neighbors_collect, weights)
 
         # Transfer county to partition
         transfer_county_to_partition(
@@ -190,11 +194,15 @@ function shrink_partition(
 
         # Choose county to eject
         boundary_collect = collect(boundary)
-        sample_weights = StatsBase.Weights([
-            1 / partition_affinities[county][partition]
+        weights = [
+            (
+                sum(aff for (_, aff) in partition_affinities[county])
+                - 2*partition_affinities[county][partition]
+            )
             for county in boundary_collect
-        ])
-        county = StatsBase.sample(boundary_collect, sample_weights)
+        ]
+        weights = StatsBase.Weights(exp.(StatsBase.zscore(weights)))
+        county = StatsBase.sample(boundary_collect, weights)
 
         # Choose partition to recieve county
         neighbor_partitions = Set{Int64}(
@@ -203,13 +211,14 @@ function shrink_partition(
         )
         delete!(neighbor_partitions, partition)
         neighbor_partitions_collect = collect(neighbor_partitions)
-        sample_weights = StatsBase.Weights([
+        weights = [
             partition_affinities[county][neighbor_partition]
             for neighbor_partition in neighbor_partitions_collect
-        ])
+        ]
+        weights = StatsBase.Weights(exp.(StatsBase.zscore(weights)))
         new_partition = StatsBase.sample(
             neighbor_partitions_collect,
-            sample_weights,
+            weights,
         )
 
         # Transfer county to other partition
@@ -288,15 +297,19 @@ function schism_partition(
     partition_population = partition_data.partition_populations[partition]
     partition_affinities = partition_data.partition_affinities
     new_partition = maximum(partitions) + 1
-    target_population = round(Int64, partition_population / 2)
+    target_population = round(
+        Int64,
+        (rand()/2+1/4) * partition_population,
+    )
 
     # Choose county to eject
     counties_collect = collect(partition_counties)
-    sample_weights = StatsBase.Weights([
+    weights = [
         partition_affinities[county][partition]
         for county in counties_collect
-    ])
-    county = StatsBase.sample(counties_collect, sample_weights)
+    ]
+    weights = StatsBase.Weights(exp.(StatsBase.zscore(weights)))
+    county = StatsBase.sample(counties_collect, weights)
 
     # Grow partition from ejected county
     transfer_county_to_partition(

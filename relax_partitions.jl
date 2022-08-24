@@ -54,6 +54,16 @@ partition_data = PartitionData(
     county_to_partition,
 )
 
+# Print parameters
+@Printf.printf("Counties: %d\n", length(interaction_graph))
+@Printf.printf("Total population: %d\n", total_population)
+@Printf.printf("Target partitions: %d\n", num_partitions)
+@Printf.printf(
+    "Target population: %d\n",
+    round(Int64, total_population / num_partitions),
+)
+@Printf.printf("Relaxation steps: %d\n", relaxation_steps)
+
 # Perform rebalancing steps
 println("Rebalancing partitions...")
 for iter in 1:relaxation_steps
@@ -80,6 +90,10 @@ for iter in 1:relaxation_steps
             shrink_partition(0, partition, partition_data)
         else
             # Grow partition if somewhat small
+            target_population = round(
+                Int64,
+                population + rand() * (target_population - population),
+            )
             grow_partition(target_population, partition, partition_data)
         end
     else
@@ -91,7 +105,15 @@ for iter in 1:relaxation_steps
                 schism_partition(partition, partition_data)
             else
                 # Shrink partition if somewhat large
-                shrink_partition(target_population, partition, partition_data)
+                target_population = round(
+                    Int64,
+                    target_population + rand() * (population - target_population),
+                )
+                shrink_partition(
+                    target_population,
+                    partition,
+                    partition_data,
+                )
             end
         end
     end

@@ -6,7 +6,7 @@ function parse_args()
     @ArgParse.add_arg_table s begin
         "--num-partitions"
             arg_type = Int64
-            default = 6
+            default = 2
         "--relaxation-steps"
             arg_type = Int64
             default = 100
