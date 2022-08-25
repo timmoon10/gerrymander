@@ -105,6 +105,8 @@ function transfer_county_to_partition(
         delete!(partitions, old_partition)
         delete!(partition_to_counties, old_partition)
         delete!(partition_populations, old_partition)
+    elseif partition_populations[old_partition] == 0
+        error("Found a partition with zero population")
     end
 
 end
@@ -294,12 +296,12 @@ function schism_partition(
     )
     partitions = partition_data.partitions
     partition_counties = partition_data.partition_to_counties[partition]
-    partition_population = partition_data.partition_populations[partition]
+    population = partition_data.partition_populations[partition]
     partition_affinities = partition_data.partition_affinities
     new_partition = maximum(partitions) + 1
     target_population = round(
         Int64,
-        (rand()/2+1/4) * partition_population,
+        (rand()/2+1/4) * population,
     )
 
     # Choose county to eject

@@ -2,7 +2,7 @@ Name	Alpha code	Numeric code
 # Alabama	AL	1
 # Arizona	AZ	4
 # Arkansas	AR	5
-California	CA	6
+# California	CA	6
 # Colorado	CO	8
 # Connecticut	CT	9
 # Delaware	DE	10
@@ -40,7 +40,7 @@ California	CA	6
 # South Carolina	SC	45
 # South Dakota	SD	46
 # Tennessee	TN	47
-# Texas	TX	48
+Texas	TX	48
 # Utah	UT	49
 # Vermont	VT	50
 # Virginia	VA	51

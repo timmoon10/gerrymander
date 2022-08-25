@@ -67,38 +67,43 @@ partition_data = PartitionData(
 # Perform rebalancing steps
 println("Rebalancing partitions...")
 for iter in 1:relaxation_steps
+    partitions = partition_data.partitions
+    partition_to_counties = partition_data.partition_to_counties
+    partition_populations = partition_data.partition_populations
+    partition_affinities = partition_data.partition_affinities
+
+    # Update affinities
+    update_partition_affinities(
+        partition_affinities,
+        partition_data.interaction_graph,
+        partition_data.county_to_partition,
+    )
 
     # Aim to evenly divide population between partitions
     target_population = total_population / num_partitions
     target_population = round(Int64, target_population)
 
     # Randomly pick partition to adjust
-    partition_populations = partition_data.partition_populations
-    partitions = collect(partition_data.partitions)
+    partitions_collect = collect(partitions)
     sample_weights = StatsBase.Weights([
         abs(partition_populations[partition] - target_population)
-        for partition in partitions
+        for partition in partitions_collect
     ])
-    partition = StatsBase.sample(partitions, sample_weights)
+    partition = StatsBase.sample(partitions_collect, sample_weights)
     population = partition_populations[partition]
 
     # Manipulate partitions to achieve target population
     if population <= target_population
+        # Grow partition if somewhat small
         ratio = population / target_population
-        if ratio < 0.25 && rand() > 4*ratio
-            # Destroy partition if very small
-            shrink_partition(0, partition, partition_data)
-        else
-            # Grow partition if somewhat small
-            target_population = round(
-                Int64,
-                population + rand() * (target_population - population),
-            )
-            grow_partition(target_population, partition, partition_data)
-        end
+        target_population = round(
+            Int64,
+            population + rand() * (target_population - population),
+        )
+        grow_partition(target_population, partition, partition_data)
     else
         ratio = target_population / population
-        if length(partition_data.partition_to_counties[partition]) > 1
+        if length(partition_to_counties[partition]) > 1
             if (length(partitions) == 1
                 || (ratio < 0.5 && rand() > 2*ratio))
                 # Schism partition if very large
@@ -121,12 +126,16 @@ for iter in 1:relaxation_steps
     # Split any disconnected partitions
     split_disconnected_partitions(partition_data)
 
-    # Update affinities
-    update_partition_affinities(
-        partition_data.partition_affinities,
-        partition_data.interaction_graph,
-        partition_data.county_to_partition,
-    )
+    # Randomly destroy small partitions
+    target_population = total_population / num_partitions
+    target_population = round(Int64, target_population)
+    for partition in collect(partitions)
+        population = partition_populations[partition]
+        ratio = population / target_population
+        if rand() > (2*ratio)^2
+            shrink_partition(0, partition, partition_data)
+        end
+    end
 
 end
 

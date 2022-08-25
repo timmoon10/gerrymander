@@ -3,7 +3,7 @@
 # Options
 num_steps=10
 interval=1
-num_partitions=6
+num_partitions=2
 
 # Apply partition relaxation steps
 pushd $(dirname $(realpath $0))
