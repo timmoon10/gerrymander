@@ -69,73 +69,48 @@ partition_data = PartitionData(
 println("Rebalancing partitions...")
 for iter in 1:relaxation_steps
     partitions = partition_data.partitions
-    partition_to_counties = partition_data.partition_to_counties
     partition_populations = partition_data.partition_populations
-    partition_affinities = partition_data.partition_affinities
 
-    # Update affinities
-    update_partition_affinities(
-        partition_affinities,
-        partition_data.interaction_graph,
-        partition_data.county_to_partition,
-    )
-
-    # Aim to evenly divide population between partitions
-    target_population = total_population / num_partitions
-    target_population = round(Int64, target_population)
-
-    # Randomly pick partition to adjust
-    partitions_collect = collect(partitions)
-    sample_weights = StatsBase.Weights([
-        abs(partition_populations[partition] - target_population)
-        for partition in partitions_collect
-    ])
-    partition = StatsBase.sample(partitions_collect, sample_weights)
-    population = partition_populations[partition]
-
-    # Manipulate partitions to achieve target population
-    if population <= target_population
-        # Grow partition if somewhat small
-        ratio = population / target_population
-        target_population = round(
-            Int64,
-            population + rand() * (target_population - population),
-        )
-        grow_partition(target_population, partition, partition_data)
-    else
-        ratio = target_population / population
-        if length(partition_to_counties[partition]) > 1
-            if (length(partitions) == 1
-                || (ratio < 0.5 && rand() > 2*ratio))
-                # Schism partition if very large
-                schism_partition(partition, partition_data)
-            else
-                # Shrink partition if somewhat large
-                target_population = round(
-                    Int64,
-                    target_population + rand() * (population - target_population),
-                )
-                shrink_partition(
-                    target_population,
-                    partition,
-                    partition_data,
-                )
-            end
-        end
+    # Trigger schisms if too few partitions
+    while length(partitions) < num_partitions
+        partitions_collect = collect(partitions)
+        weights = [
+            partition_populations[partition]
+            for partition in partitions_collect
+        ]
+        weights = StatsBase.Weights(exp.(StatsBase.zscore(weights)))
+        partition = StatsBase.sample(partitions_collect, weights)
+        schism_partition(partition, partition_data)
     end
+
+    # Dissolve partitions if too many
+    while length(partitions) > num_partitions
+        partitions_collect = collect(partitions)
+        weights = [
+            -partition_populations[partition]
+            for partition in partitions_collect
+        ]
+        weights = StatsBase.Weights(exp.(StatsBase.zscore(weights)))
+        partition = StatsBase.sample(partitions_collect, weights)
+        shrink_partition(0, partition, partition_data)
+    end
+
+    # Relax partitions
+    softmax_relaxation(8, partition_data)
 
     # Split any disconnected partitions
     split_disconnected_partitions(partition_data)
 
-    # Randomly destroy small partitions
-    target_population = total_population / num_partitions
-    target_population = round(Int64, target_population)
-    for partition in collect(partitions)
-        population = partition_populations[partition]
-        ratio = population / target_population
-        if rand() > (2*ratio)^2
-            shrink_partition(0, partition, partition_data)
-        end
+    # Dissolve partitions if too many
+    while length(partitions) > num_partitions
+        partitions_collect = collect(partitions)
+        weights = [
+            -partition_populations[partition]
+            for partition in partitions_collect
+        ]
+        weights = StatsBase.Weights(exp.(StatsBase.zscore(weights)))
+        partition = StatsBase.sample(partitions_collect, weights)
+        shrink_partition(0, partition, partition_data)
     end
 
 end

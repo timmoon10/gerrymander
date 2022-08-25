@@ -2,6 +2,7 @@
 # Utility functions for manipulating partitions
 #
 using DataStructures: DefaultDict, SortedDict
+using LinearAlgebra
 import StatsBase
 include(joinpath(dirname(@__FILE__), "common.jl"))
 include(joinpath(project_dir, "graph.jl"))
@@ -32,6 +33,7 @@ struct PartitionData
     partitions::Set{Int64}
     county_to_partition::Dict{Int64, Int64}
     partition_to_counties::DefaultDict{Int64, Set{Int64}}
+    county_populations::Dict{Int64, Int64}
     partition_populations::DefaultDict{Int64, Int64} # part -> pop
     partition_affinities::Dict{Int64, DefaultDict{Int64, Float64}} # county -> part -> affinity
 end
@@ -39,34 +41,51 @@ function PartitionData(
     interaction_graph::Dict{Int64, Dict{Int64, Float64}},
     geography_graph::Dict{Int64, Dict{Int64, Float64}},
     county_to_partition::Dict{Int64, Int64},
+    county_populations::Dict{Int64, Int64},
     )::PartitionData
+    partition_data = PartitionData(
+        interaction_graph,
+        geography_graph,
+        Set{Int64}(), # partitions
+        Dict{Int64, Int64}(), # county_to_partition
+        DefaultDict{Int64, Set{Int64}}(Set{Int64}), # partition_to_counties
+        county_populations,
+        DefaultDict{Int64, Int64}(0), # partition_populations
+        Dict{Int64, DefaultDict{Int64, Float64}}(), # partition_affinities
+    )
+    update_partition_data(county_to_partition, partition_data)
+    return partition_data
+end
 
-    # Load initial partition
-    partitions = Set{Int64}()
-    partition_to_counties = DefaultDict{Int64, Set{Int64}}(Set{Int64})
-    partition_populations = DefaultDict{Int64, Int64}(0)
+function update_partition_data(
+    county_to_partition::Dict{Int64, Int64},
+    partition_data::PartitionData,
+    )
+    partitions = partition_data.partitions
+    partition_to_counties = partition_data.partition_to_counties
+    partition_populations = partition_data.partition_populations
+    partition_affinities = partition_data.partition_affinities
+
+    # Clear old data
+    empty!(partitions)
+    empty!(partition_data.county_to_partition)
+    empty!(partition_to_counties)
+    empty!(partition_populations)
+    empty!(partition_affinities)
+
+    # Initialize partitions
     for (county, partition) in county_to_partition
+        partition_data.county_to_partition[county] = partition
         push!(partitions, partition)
         push!(partition_to_counties[partition], county)
-        partition_populations[partition] += populations[county]
+        partition_populations[partition] += county_populations[county]
     end
 
     # Compute affinity between counties and partitions
-    partition_affinities = Dict{Int64, DefaultDict{Int64, Float64}}()
     update_partition_affinities(
         partition_affinities,
         interaction_graph,
         county_to_partition,
-    )
-
-    return PartitionData(
-        interaction_graph,
-        geography_graph,
-        partitions,
-        county_to_partition,
-        partition_to_counties,
-        partition_populations,
-        partition_affinities,
     )
 
 end
@@ -80,6 +99,7 @@ function transfer_county_to_partition(
     partitions = partition_data.partitions
     county_to_partition = partition_data.county_to_partition
     partition_to_counties = partition_data.partition_to_counties
+    county_populations = partition_data.county_populations
     partition_populations = partition_data.partition_populations
     partition_affinities = partition_data.partition_affinities
     old_partition = county_to_partition[county]
@@ -91,8 +111,8 @@ function transfer_county_to_partition(
     push!(partition_to_counties[new_partition], county)
 
     # Transfer population
-    partition_populations[old_partition] -= populations[county]
-    partition_populations[new_partition] += populations[county]
+    partition_populations[old_partition] -= county_populations[county]
+    partition_populations[new_partition] += county_populations[county]
 
     # Transfer affinity
     for (neighbor, affinity) in interaction_graph[county]
@@ -324,5 +344,110 @@ function schism_partition(
         new_partition,
         partition_data,
     )
+
+end
+
+function softmax!(x::Array{Float64})
+    shift = -maximum(x)
+    for i in 1:length(x)
+        x[i] = exp(x[i] + shift)
+    end
+    scale = 1 / sum(x)
+    for i in 1:length(x)
+        x[i] *= scale
+    end
+end
+
+function softmax_relaxation(
+    steps::Int64,
+    partition_data::PartitionData,
+    )
+    interaction_graph = partition_data.interaction_graph
+    num_counties = length(partition_data.county_to_partition)
+    local num_partitions = length(partition_data.partitions)
+
+    # Convert county and partition IDs to local indices
+    col_to_county = collect(keys(partition_data.county_to_partition))
+    row_to_partition = collect(partition_data.partitions)
+    county_to_col = Dict{Int64, Int64}(
+        county => col
+        for (col, county) in enumerate(col_to_county)
+    )
+    partition_to_row = Dict{Int64, Int64}(
+        partition => row
+        for (row, partition) in enumerate(row_to_partition)
+    )
+
+    # Construct vector with county populations
+    total_population = 0
+    county_populations = Array{Float64}(undef, num_counties)
+    for (col, county) in enumerate(col_to_county)
+        pop = partition_data.county_populations[county]
+        total_population += pop
+        county_populations[col] = pop
+    end
+
+    # Initialize partition membership as one-hot
+    loyalties = zeros(num_partitions, num_counties)
+    for (county, partition) in partition_data.county_to_partition
+        row = partition_to_row[partition]
+        col = county_to_col[county]
+        loyalties[row, col] = 1.0
+    end
+    new_loyalties = Array{Float64, 2}(undef, num_partitions, num_counties)
+
+    for step in 1:steps
+
+        # Compute factors for rebalancing partition populations
+        target_population = total_population / num_partitions
+        partition_populations = loyalties * county_populations
+        scales::Array{Float64} = [
+            min(1.0, target_population / pop)
+            for pop in partition_populations
+        ]
+        one_minus_scales::Array{Float64} = 1.0 .- scales
+        grow_factors::Array{Float64} = [
+            max(0.0, target_population - pop)
+            for pop in partition_populations
+        ]
+        grow_factors ./= max(sum(grow_factors), 1e-8)
+
+        # Rebalance partition populations
+        for col in 1:num_counties
+            transfer_population = LinearAlgebra.dot(
+                one_minus_scales,
+                loyalties[:,col],
+            )
+            loyalties[:,col] .*= scales
+            loyalties[:,col] .+= transfer_population .* grow_factors
+        end
+
+        # Recompute partition membership
+        ### TODO Sparse matmul
+        new_loyalties = zeros(size(loyalties))
+        for col in 1:num_counties
+            county = col_to_county[col]
+            neighbors = collect(keys(interaction_graph[county]))
+            affinities = [interaction_graph[county][neighbor] for neighbor in neighbors]
+            affinities /= sum(affinities)
+            for (neighbor, affinity) in zip(neighbors, affinities)
+                neighbor_col = county_to_col[neighbor]
+                new_loyalties[:,col] .+= affinity .* loyalties[:,neighbor_col]
+            end
+            softmax!(new_loyalties[:,col])
+        end
+        loyalties, new_loyalties = new_loyalties, loyalties
+
+    end
+
+    # Choose partition membership based on greatest loyalty
+    county_to_partition = argmax(loyalties, dims=1)
+    county_to_partition = Dict{Int64, Int64}(
+        col_to_county[inds[2]] => row_to_partition[inds[1]]
+        for inds in county_to_partition
+    )
+
+    # Update partition data
+    update_partition_data(county_to_partition, partition_data)
 
 end
