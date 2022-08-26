@@ -9,6 +9,8 @@ import Serialization
 include(joinpath(dirname(@__FILE__), "common.jl"))
 include(joinpath(project_dir, "libgeos_utils.jl"))
 
+println("Threads: ", Threads.nthreads())
+
 # Import partition data
 println("Importing partition data...")
 partition_data = DelimitedFiles.readdlm(partition_file, '\t')
@@ -129,29 +131,34 @@ function construct_shapes(
     partition_shapes = Dict{Int64, LibGEOS.GEOSGeom}()
 
     # Construct LibGEOS shape for each region
-    for (id, region) in regions
-        if !haskey(partitions, id)
-            continue
+    partitions_list = collect(Set{Int64}(values(partitions)))
+    Threads.@threads for partition in partitions_list
+        for (id, region) in regions
+            if !haskey(partitions, id)
+                continue
+            end
+            if partitions[id] != partition
+                continue
+            end
+
+            # Construct region shape
+            region_shapes[id] = make_multipolygon(region)
+            region_shape = region_shapes[id]
+
+            # Add region shape to partition shape
+            if haskey(partition_shapes, partition)
+                partition_shapes[partition] = LibGEOS.union(
+                    partition_shapes[partition],
+                    region_shape.ptr,
+                )
+            else
+                partition_shapes[partition] = LibGEOS.union(
+                    region_shape.ptr,
+                    region_shape.ptr,
+                )
+            end
+
         end
-        partition::Int64 = partitions[id]
-
-        # Construct region shape
-        region_shapes[id] = make_multipolygon(region)
-        region_shape = region_shapes[id]
-
-        # Add region shape to partition shape
-        if haskey(partition_shapes, partition)
-            partition_shapes[partition] = LibGEOS.union(
-                partition_shapes[partition],
-                region_shape.ptr,
-            )
-        else
-            partition_shapes[partition] = LibGEOS.union(
-                region_shape.ptr,
-                region_shape.ptr,
-            )
-        end
-
     end
 
     return (region_shapes, partition_shapes)

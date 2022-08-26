@@ -412,12 +412,12 @@ function softmax_relaxation(
         # Compute factors for rebalancing partition populations
         target_population = total_population / num_partitions
         partition_populations = loyalties * county_populations
-        scales::Array{Float64} = [
+        scales::Array{Float64,1} = [
             min(1.0, target_population / pop)
             for pop in partition_populations
         ]
-        one_minus_scales::Array{Float64} = 1.0 .- scales
-        grow_factors::Array{Float64} = [
+        one_minus_scales::Array{Float64,1} = 1.0 .- scales
+        grow_factors::Array{Float64,1} = [
             max(0.0, target_population - pop)
             for pop in partition_populations
         ]
@@ -425,24 +425,25 @@ function softmax_relaxation(
 
         # Rebalance partition populations
         for col in 1:num_counties
+            loyalties_col = view(loyalties, :, col)
             transfer_population = LinearAlgebra.dot(
                 one_minus_scales,
-                loyalties[:,col],
-            )
-            loyalties[:,col] .*= scales
-            loyalties[:,col] .+= transfer_population .* grow_factors
+                loyalties_col)
+            loyalties_col .*= scales
+            loyalties_col .+= transfer_population .* grow_factors
             for row in 1:num_partitions
-                loyalties[row,col] += 1e-2*randn()
+                loyalties_col[row] += 1e-2*randn()
             end
         end
 
         # Recompute partition membership
         new_loyalties = zeros(size(loyalties))
         for col in 1:num_counties
+            new_loyalties_col = view(new_loyalties, :, col)
             for (neighbor_col, affinity) in normalized_graph[col]
-                new_loyalties[:,col] .+= affinity .* loyalties[:,neighbor_col]
+                new_loyalties_col .+= affinity .* @view loyalties[:,neighbor_col]
             end
-            softmax!(new_loyalties[:,col])
+            softmax!(new_loyalties_col)
         end
         loyalties, new_loyalties = new_loyalties, loyalties
 
