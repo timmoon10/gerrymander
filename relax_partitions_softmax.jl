@@ -71,46 +71,26 @@ for iter in 1:relaxation_steps
     partitions = partition_data.partitions
     partition_populations = partition_data.partition_populations
 
-    # Trigger schisms if too few partitions
+    # Add partitions if too few
     while length(partitions) < num_partitions
-        partitions_collect = collect(partitions)
-        weights = [
-            partition_populations[partition]
-            for partition in partitions_collect
-        ]
-        weights = StatsBase.Weights(exp.(StatsBase.zscore(weights)))
-        partition = StatsBase.sample(partitions_collect, weights)
-        schism_partition(partition, partition_data)
-    end
-
-    # Dissolve partitions if too many
-    while length(partitions) > num_partitions
-        partitions_collect = collect(partitions)
-        weights = [
-            -partition_populations[partition]
-            for partition in partitions_collect
-        ]
-        weights = StatsBase.Weights(exp.(StatsBase.zscore(weights)))
-        partition = StatsBase.sample(partitions_collect, weights)
-        shrink_partition(0, partition, partition_data)
+        push!(partitions, maximum(partitions)+1)
     end
 
     # Relax partitions
-    softmax_relaxation(8, partition_data)
+    softmax_relaxation(50, partition_data)
 
     # Split any disconnected partitions
     split_disconnected_partitions(partition_data)
 
-    # Dissolve partitions if too many
-    while length(partitions) > num_partitions
-        partitions_collect = collect(partitions)
-        weights = [
-            -partition_populations[partition]
-            for partition in partitions_collect
-        ]
-        weights = StatsBase.Weights(exp.(StatsBase.zscore(weights)))
-        partition = StatsBase.sample(partitions_collect, weights)
-        shrink_partition(0, partition, partition_data)
+    # Randomly destroy small partitions
+    target_population = total_population / num_partitions
+    target_population = round(Int64, target_population)
+    for partition in collect(partitions)
+        population = partition_populations[partition]
+        ratio = population / target_population
+        if rand() > (2*ratio)^2
+            shrink_partition(0, partition, partition_data)
+        end
     end
 
 end

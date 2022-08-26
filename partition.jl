@@ -2,10 +2,12 @@
 # Utility functions for manipulating partitions
 #
 using DataStructures: DefaultDict, SortedDict
-using LinearAlgebra
+import LinearAlgebra
+import Statistics
 import StatsBase
 include(joinpath(dirname(@__FILE__), "common.jl"))
 include(joinpath(project_dir, "graph.jl"))
+include(joinpath(project_dir, "math.jl"))
 
 # Function to compute affinity of each county to each partition
 function update_partition_affinities(
@@ -166,7 +168,8 @@ function grow_partition(
             )
             for county in neighbors_collect
         ]
-        weights = StatsBase.Weights(exp.(StatsBase.zscore(weights)))
+        zscore!(weights)
+        weights = StatsBase.Weights(exp.(weights))
         county = StatsBase.sample(neighbors_collect, weights)
 
         # Transfer county to partition
@@ -223,7 +226,8 @@ function shrink_partition(
             )
             for county in boundary_collect
         ]
-        weights = StatsBase.Weights(exp.(StatsBase.zscore(weights)))
+        zscore!(weights)
+        weights = StatsBase.Weights(exp.(weights))
         county = StatsBase.sample(boundary_collect, weights)
 
         # Choose partition to recieve county
@@ -237,7 +241,8 @@ function shrink_partition(
             partition_affinities[county][neighbor_partition]
             for neighbor_partition in neighbor_partitions_collect
         ]
-        weights = StatsBase.Weights(exp.(StatsBase.zscore(weights)))
+        zscore!(weights)
+        weights = StatsBase.Weights(exp.(weights))
         new_partition = StatsBase.sample(
             neighbor_partitions_collect,
             weights,
@@ -330,7 +335,8 @@ function schism_partition(
         partition_affinities[county][partition]
         for county in counties_collect
     ]
-    weights = StatsBase.Weights(exp.(StatsBase.zscore(weights)))
+    zscore!(weights)
+    weights = StatsBase.Weights(exp.(weights))
     county = StatsBase.sample(counties_collect, weights)
 
     # Grow partition from ejected county
@@ -345,17 +351,6 @@ function schism_partition(
         partition_data,
     )
 
-end
-
-function softmax!(x::Array{Float64})
-    shift = -maximum(x)
-    for i in 1:length(x)
-        x[i] = exp(x[i] + shift)
-    end
-    scale = 1 / sum(x)
-    for i in 1:length(x)
-        x[i] *= scale
-    end
 end
 
 function softmax_relaxation(
@@ -387,6 +382,22 @@ function softmax_relaxation(
         county_populations[col] = pop
     end
 
+    # Normalize interaction graph
+    normalized_graph = Array{Dict{Int64,Float64}}(undef, num_counties)
+    for col in 1:num_counties
+        county = col_to_county[col]
+        neighbors = collect(keys(interaction_graph[county]))
+        affinities = [
+            interaction_graph[county][neighbor]
+            for neighbor in neighbors
+        ]
+        zscore!(affinities)
+        normalized_graph[col] = Dict{Int64,Float64}(
+            county_to_col[neighbor] => affinity
+            for (neighbor, affinity) in zip(neighbors, affinities)
+        )
+    end
+
     # Initialize partition membership as one-hot
     loyalties = zeros(num_partitions, num_counties)
     for (county, partition) in partition_data.county_to_partition
@@ -414,24 +425,27 @@ function softmax_relaxation(
 
         # Rebalance partition populations
         for col in 1:num_counties
+
+            # Transfer population from large partitions to small
             transfer_population = LinearAlgebra.dot(
                 one_minus_scales,
                 loyalties[:,col],
             )
             loyalties[:,col] .*= scales
             loyalties[:,col] .+= transfer_population .* grow_factors
+
+            # Perturb and renormalize
+            for row in 1:num_partitions
+                loyalties[row,col] += transfer_population*randn()
+            end
+            loyalties[:,col] .+= (1.0 - sum(loyalties[:,col])) / num_partitions
+
         end
 
         # Recompute partition membership
-        ### TODO Sparse matmul
         new_loyalties = zeros(size(loyalties))
         for col in 1:num_counties
-            county = col_to_county[col]
-            neighbors = collect(keys(interaction_graph[county]))
-            affinities = [interaction_graph[county][neighbor] for neighbor in neighbors]
-            affinities /= sum(affinities)
-            for (neighbor, affinity) in zip(neighbors, affinities)
-                neighbor_col = county_to_col[neighbor]
+            for (neighbor_col, affinity) in normalized_graph[col]
                 new_loyalties[:,col] .+= affinity .* loyalties[:,neighbor_col]
             end
             softmax!(new_loyalties[:,col])
