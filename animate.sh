@@ -12,7 +12,7 @@ rm -r results/animation
 mkdir -p results/animation
 for (( step = 1; step <= ${num_steps}; step += ${interval} )); do
     julia \
-        relax_partitions.jl \
+        relax_partitions_softmax.jl \
         --relaxation-steps=${interval} \
         --num-partitions=${num_partitions}
     julia plot_results.jl

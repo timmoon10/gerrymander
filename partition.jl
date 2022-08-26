@@ -425,21 +425,15 @@ function softmax_relaxation(
 
         # Rebalance partition populations
         for col in 1:num_counties
-
-            # Transfer population from large partitions to small
             transfer_population = LinearAlgebra.dot(
                 one_minus_scales,
                 loyalties[:,col],
             )
             loyalties[:,col] .*= scales
             loyalties[:,col] .+= transfer_population .* grow_factors
-
-            # Perturb and renormalize
             for row in 1:num_partitions
-                loyalties[row,col] += transfer_population*randn()
+                loyalties[row,col] += 1e-2*randn()
             end
-            loyalties[:,col] .+= (1.0 - sum(loyalties[:,col])) / num_partitions
-
         end
 
         # Recompute partition membership
