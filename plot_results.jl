@@ -7,6 +7,7 @@ import LibGEOS
 import PyPlot
 import Serialization
 include(joinpath(dirname(@__FILE__), "common.jl"))
+include(joinpath(project_dir, "libgeos_utils.jl"))
 
 # Import partition data
 println("Importing partition data...")
@@ -134,23 +135,8 @@ function construct_shapes(
         end
         partition::Int64 = partitions[id]
 
-        # Get region coordinates
-        region_coords = Vector{Vector{Vector{Vector{Float64}}}}()
-        sizehint!(region_coords, length(region))
-        for polygon in region
-            push!(region_coords, Vector{Vector{Vector{Float64}}}())
-            sizehint!(region_coords[end], length(polygon))
-            for border in polygon
-                push!(region_coords[end], Vector{Vector{Float64}}())
-                sizehint!(region_coords[end][end], size(border, 2))
-                for j in 1:size(border, 2)
-                    push!(region_coords[end][end], border[:, j])
-                end
-            end
-        end
-
         # Construct region shape
-        region_shapes[id] = LibGEOS.MultiPolygon(region_coords)
+        region_shapes[id] = make_multipolygon(region)
         region_shape = region_shapes[id]
 
         # Add region shape to partition shape

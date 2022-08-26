@@ -9,7 +9,7 @@ function parse_args()
             default = 2
         "--relaxation-steps"
             arg_type = Int64
-            default = 100
+            default = 20
         "--partisan-attraction"
             arg_type = Float64
             default = 0.0
