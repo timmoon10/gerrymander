@@ -6,5 +6,5 @@ julia construct_interaction_graph.jl
 julia construct_geography_graph.jl
 julia relax_partitions_softmax.jl $@
 JULIA_NUM_THREADS=4 julia plot_results.jl
-julia count_partition_votes.jl
+julia simulate_election.jl
 popd

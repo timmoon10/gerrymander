@@ -442,6 +442,15 @@ function softmax_relaxation(
 
     end
 
+    # Remove small partitions
+    partition_populations = loyalties * county_populations
+    for row in 1:num_partitions
+        if partition_populations[row,1] < target_population / 4
+            loyalties_row = view(loyalties, row, :)
+            loyalties_row .= 1e-2
+        end
+    end
+
     # Choose partition membership based on greatest loyalty
     county_to_partition = argmax(loyalties, dims=1)
     county_to_partition = Dict{Int64, Int64}(
