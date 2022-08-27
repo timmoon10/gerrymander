@@ -419,28 +419,18 @@ function softmax_relaxation(
             min(1.0, target_population / pop)
             for pop in partition_populations
         ]
-        one_minus_scales::Array{Float64,1} = 1.0 .- scales
-        grow_factors::Array{Float64,1} = [
-            max(0.0, target_population - pop)
-            for pop in partition_populations
-        ]
-        grow_factors ./= max(sum(grow_factors), 1e-8)
 
-        # Rebalance partition populations
+        # Penalize large partitions
         for col in 1:num_counties
             loyalties_col = view(loyalties, :, col)
-            transfer_population = LinearAlgebra.dot(
-                one_minus_scales,
-                loyalties_col)
             loyalties_col .*= scales
-            loyalties_col .+= transfer_population .* grow_factors
             for row in 1:num_partitions
                 loyalties_col[row] += 1e-2*randn()
             end
         end
 
         # Recompute partition membership
-        new_loyalties = zeros(size(loyalties))
+        fill!(new_loyalties, 0.0)
         for col in 1:num_counties
             new_loyalties_col = view(new_loyalties, :, col)
             for (neighbor_col, affinity) in normalized_graph[col]

@@ -41,14 +41,6 @@ function make_interaction_graph(
         z1 = county1_data[7]
         var1 = county1_data[8]
 
-        # Add current county data to binned cache
-        bin = (
-            floor(Int64, x1 / bin_size),
-            floor(Int64, y1 / bin_size),
-            floor(Int64, z1 / bin_size),
-        )
-        push!(binned_county_data[bin], county1_data)
-
         # Search for counties in nearby bins
         pos1 = [x1, y1, z1]
         bins_min = floor.(Int64, (pos1 .- max_dist) ./ bin_size)
@@ -96,6 +88,14 @@ function make_interaction_graph(
 
             end
         end
+
+        # Add current county data to binned cache
+        bin = (
+            floor(Int64, x1 / bin_size),
+            floor(Int64, y1 / bin_size),
+            floor(Int64, z1 / bin_size),
+        )
+        push!(binned_county_data[bin], county1_data)
 
     end
 

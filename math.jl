@@ -14,9 +14,14 @@ function softmax!(x::AbstractArray{Float64,1})
 end
 
 function zscore!(x::AbstractArray{Float64,1})
-    mean::Float64 = Statistics.mean(x)
-    std::Float64 = Statistics.stdm(x, mean)
-    rstd::Float64 = 1 / std
+    mean::Float64 = sum(x) / length(x)
+    var::Float64 = 0
+    for i in 1:length(x)
+        diff::Float64 = x[i] - mean
+        var += diff * diff
+    end
+    var /= length(x)
+    rstd::Float64 = 1 / sqrt(var)
     x .-= mean
     x .*= rstd
 end
