@@ -291,7 +291,10 @@ function split_disconnected_partitions(
             first(partition_counties),
         )
         while length(connected_counties) != length(partition_counties)
-            partition = maximum(partitions) + 1
+            partition = 1
+            while in(partition, partitions)
+                partition += 1
+            end
             push!(partitions, partition)
             setdiff!(partition_counties, connected_counties)
             for county in partition_counties
@@ -354,6 +357,7 @@ function schism_partition(
 end
 
 function softmax_relaxation(
+    target_population::Float64,
     steps::Int64,
     partition_data::PartitionData,
     )
@@ -410,7 +414,6 @@ function softmax_relaxation(
     for step in 1:steps
 
         # Compute factors for rebalancing partition populations
-        target_population = total_population / num_partitions
         partition_populations = loyalties * county_populations
         scales::Array{Float64,1} = [
             min(1.0, target_population / pop)

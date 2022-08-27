@@ -70,21 +70,9 @@ println("Rebalancing partitions...")
 for iter in 1:relaxation_steps
     partitions = partition_data.partitions
     partition_populations = partition_data.partition_populations
-
-    # Add partitions if too few
-    while length(partitions) < num_partitions
-        push!(partitions, maximum(partitions)+1)
-    end
-
-    # Relax partitions
-    softmax_relaxation(50, partition_data)
-
-    # Split any disconnected partitions
-    split_disconnected_partitions(partition_data)
+    target_population = total_population / num_partitions
 
     # Randomly destroy small partitions
-    target_population = total_population / num_partitions
-    target_population = round(Int64, target_population)
     for partition in collect(partitions)
         population = partition_populations[partition]
         ratio = population / target_population
@@ -92,6 +80,21 @@ for iter in 1:relaxation_steps
             shrink_partition(0, partition, partition_data)
         end
     end
+
+    # Add partitions if too few
+    while length(partitions) < num_partitions
+        partition = 1
+        while in(partition, partitions)
+            partition += 1
+        end
+        push!(partitions, partition)
+    end
+
+    # Relax partitions
+    softmax_relaxation(target_population, 50, partition_data)
+
+    # Split any disconnected partitions
+    split_disconnected_partitions(partition_data)
 
 end
 
