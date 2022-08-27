@@ -1,6 +1,7 @@
 #
 # Plot partitions
 #
+using DataStructures: DefaultDict
 import DelimitedFiles
 import GeoInterface
 import LibGEOS
@@ -130,35 +131,24 @@ function construct_shapes(
     region_shapes = Dict{Int64, LibGEOS.MultiPolygon}()
     partition_shapes = Dict{Int64, LibGEOS.GEOSGeom}()
 
-    # Construct LibGEOS shape for each region
-    partitions_list = collect(Set{Int64}(values(partitions)))
-    Threads.@threads for partition in partitions_list
-        for (id, region) in regions
-            if !haskey(partitions, id)
-                continue
-            end
-            if partitions[id] != partition
-                continue
-            end
-
-            # Construct region shape
-            region_shapes[id] = make_multipolygon(region)
-            region_shape = region_shapes[id]
-
-            # Add region shape to partition shape
-            if haskey(partition_shapes, partition)
-                partition_shapes[partition] = LibGEOS.union(
-                    partition_shapes[partition],
-                    region_shape.ptr,
-                )
-            else
-                partition_shapes[partition] = LibGEOS.union(
-                    region_shape.ptr,
-                    region_shape.ptr,
-                )
-            end
-
+    # Construct shape for each region
+    partition_regions = DefaultDict{Int64, Vector{Vector{Array{Float64, 2}}}}(
+        Vector{Vector{Array{Float64, 2}}},
+    )
+    for (id, region) in regions
+        if !haskey(partitions, id)
+            continue
         end
+        partition = partitions[id]
+        region_shapes[id] = make_multipolygon(region)
+        append!(partition_regions[partition], region)
+    end
+
+    # Construct shape for each partition
+    Threads.@threads for (partition, region) in collect(partition_regions)
+        partition_shapes[partition] = LibGEOS.unaryUnion(
+            make_multipolygon(region).ptr,
+        )
     end
 
     return (region_shapes, partition_shapes)
