@@ -1,4 +1,6 @@
 include(joinpath(@__DIR__, "Gerrymander.jl"))
 
-code = 10
-println("State ", code, " is ", Gerrymander.DataFiles.state_names()[code])
+state_id::UInt = 10
+state_name = Gerrymander.DataFiles.state_names()[state_id]
+println("State ", state_id, " is ", state_name)
+Gerrymander.DataFiles.maybe_parse_county_populations([state_id])
