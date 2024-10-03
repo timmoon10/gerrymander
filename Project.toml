@@ -1,0 +1,8 @@
+name = "Gerrymander"
+uuid = "06c1bcbd-9c44-4ad1-8326-5c6c7389414e"
+version = "3.0.0"
+
+[deps]
+DataStructures = "864edb3b-99cc-5e75-8d2d-829cb0a9cfe8"
+DelimitedFiles = "8bb1440f-4735-579b-a4ab-409b98df4dab"
+Memoize = "c03570c3-d221-55d1-a50c-7939bbd78826"
