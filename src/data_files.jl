@@ -7,6 +7,7 @@ import Downloads
 import GDAL_jll
 import JSON
 import Memoize
+import Serialization
 
 import ..Constants
 
@@ -214,9 +215,63 @@ function maybe_parse_county_populations(state_ids::AbstractVector{UInt})::String
     end
 
     # Output results to file
-    println("Exporting county data...")
+    println("Exporting county populations...")
     DelimitedFiles.writedlm(county_populations_file, county_data, '\t')
     return county_populations_file
+
+end
+
+function maybe_parse_county_boundaries()::String
+
+    # Return immediately if county boundary data file exists
+    county_boundaries_file = joinpath(
+        root_dir(),
+        "results",
+        "county_populations.bin",
+    )
+    if isfile(county_boundaries_file)
+        return county_boundaries_file
+    end
+
+    # Get geography data
+    json_file = maybe_download_geography_data()
+    geography_data = JSON.parsefile(json_file)["features"]
+
+    "Parse polygon boundary"
+    function parse_polygon(polygon_data::Vector{Any})::Vector{Array{Float64, 2}}
+        polygon = Vector{Array{Float64, 2}}(undef, length(polygon_data))
+        @inbounds for (i, border_data::Vector{Any}) in enumerate(polygon_data)
+            @inbounds polygon[i] = Array{Float64, 2}(undef, (2, length(border_data)))
+            @inbounds border = polygon[i]
+            @inbounds for (j, coord::Vector{Float64}) in enumerate(border_data)
+                @inbounds border[1, j] = coord[1]
+                @inbounds border[2, j] = coord[2]
+            end
+        end
+        return polygon
+    end
+
+    # Parse county boundaries
+    println("Parsing county boundaries...")
+    county_boundaries = Dict{UInt, Vector{Vector{Array{Float64, 2}}}}()
+    for county_data in geography_data
+        id = parse(UInt, county_data["properties"]["GEOID"])
+        geometry_type = county_data["geometry"]["type"]
+        if geometry_type == "Polygon"
+            polygon_data = county_data["geometry"]["coordinates"]
+            county_boundaries[id] = [parse_polygon(polygon_data)]
+        elseif geometry_type == "MultiPolygon"
+            multipolygon_data = county_data["geometry"]["coordinates"]
+            county_boundaries[id] = [
+                parse_polygon(polygon_data)
+                for polygon_data in multipolygon_data]
+        end
+    end
+
+    # Write results to file
+    println("Exporting county boundaries...")
+    Serialization.serialize(county_boundaries_file, county_boundaries)
+    return county_boundaries_file
 
 end
 
