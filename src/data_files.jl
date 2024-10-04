@@ -78,7 +78,13 @@ function maybe_download_geography_data()::String
     return json_file
 end
 
-function maybe_parse_county_populations(state_ids::AbstractVector{UInt})::String
+"Load county populations from file
+
+Each row corresponds to a county and has 6 fields: county ID,
+population, x-coordinate, y-coordinate, z-coordinate, variance.
+
+"
+function load_county_populations(state_ids::AbstractVector{UInt})::Array{Any, 2}
 
     # Return immediately if county population data file exists
     county_populations_file = joinpath(
@@ -87,7 +93,12 @@ function maybe_parse_county_populations(state_ids::AbstractVector{UInt})::String
         "county_populations.tsv",
     )
     if isfile(county_populations_file)
-        return county_populations_file
+        (county_data, _) = DelimitedFiles.readdlm(
+            county_populations_file,
+            '\t',
+            header=true,
+        )
+        return county_data
     end
 
     # Get census block data
@@ -215,13 +226,21 @@ function maybe_parse_county_populations(state_ids::AbstractVector{UInt})::String
     end
 
     # Output results to file
-    println("Exporting county populations...")
+    println("Saving county populations...")
     DelimitedFiles.writedlm(county_populations_file, county_data, '\t')
-    return county_populations_file
+    return county_data[2:end, :]
 
 end
 
-function maybe_parse_county_boundaries()::String
+"Load county boundaries from file
+
+Each dict key corresponds to a county. Each county is composed of one
+or more polygons, which have one or more borders. Each border is a
+list of (x,y) coordinates that form a complete ring. The first border
+is the external border, and other borders are internal.
+
+"
+function load_county_boundaries()::Dict{UInt, Vector{Vector{Array{Float64, 2}}}}
 
     # Return immediately if county boundary data file exists
     county_boundaries_file = joinpath(
@@ -230,7 +249,7 @@ function maybe_parse_county_boundaries()::String
         "county_populations.bin",
     )
     if isfile(county_boundaries_file)
-        return county_boundaries_file
+        return Serialization.deserialize(county_boundaries_file)
     end
 
     # Get geography data
@@ -269,9 +288,9 @@ function maybe_parse_county_boundaries()::String
     end
 
     # Write results to file
-    println("Exporting county boundaries...")
+    println("Saving county boundaries...")
     Serialization.serialize(county_boundaries_file, county_boundaries)
-    return county_boundaries_file
+    return county_boundaries
 
 end
 
