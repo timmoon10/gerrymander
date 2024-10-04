@@ -1,5 +1,6 @@
 module DataFiles
 
+import Base.Threads
 import DataStructures
 import DelimitedFiles
 import Downloads
@@ -89,58 +90,67 @@ function maybe_parse_county_populations(state_ids::AbstractVector{UInt})::String
     end
 
     # Get census block data
-    json_files = [
-        maybe_download_census_block_data(state_id)
-        for state_id in state_ids]
+    json_files = [maybe_download_census_block_data(state_id) for state_id in state_ids]
 
+    "Compute sum of coordinates on unit sphere"
     function coords_sum(
         coords::Vector{Any},
         )::Tuple{Float64, Float64, Float64}
         deg_to_rad::Float64 = pi / 180
-        sum_x::Float64 = 0
-        sum_y::Float64 = 0
-        sum_z::Float64 = 0
-        for coord::Vector{Float64} in coords
-            long::Float64 = deg_to_rad * coord[1]
-            lat::Float64 = deg_to_rad * coord[2]
-            sum_x += cos(long) * sin(lat)
-            sum_y += sin(long) * sin(lat)
-            sum_z += cos(lat)
+        sx::Float64 = 0
+        sy::Float64 = 0
+        sz::Float64 = 0
+        @inbounds for coord::Vector{Float64} in coords
+            @inbounds long::Float64 = deg_to_rad * coord[1]
+            @inbounds lat::Float64 = deg_to_rad * coord[2]
+            @inbounds (sin_long, cos_long) = sincos(long)
+            @inbounds (sin_lat, cos_lat) = sincos(lat)
+            sx += cos_long * sin_lat
+            sy += sin_long * sin_lat
+            sz += cos_lat
         end
-        return (sum_x, sum_y, sum_z)
+        return (sx, sy, sz)
     end
 
+    "Parse population data for a state"
     function parse_state_data(
         json_file::String,
         state_id::UInt,
         )::Array{Any, 2}
 
-        # Parse JSON file to get position and population of census blocks
-        sums = Dict{UInt, Array{Float64}}()
-        for block_json::Dict{String, Any} in JSON.parsefile(json_file)["features"]
+        # Parse JSON file
+        state_data = JSON.parsefile(json_file)["features"]
+
+        # Parse census block data in parallel
+        make_sums = () -> zeros(Float64, 7)
+        thread_sums = [
+            DataStructures.DefaultDict{UInt, Array{Float64}}(make_sums)
+            for _ in 1:Base.Threads.nthreads()]
+        @Base.Threads.threads for i in 1:length(state_data)
+            block_data = state_data[i]
 
             # Approximate census block position
             sum_x::Float64 = 0.0
             sum_y::Float64 = 0.0
             sum_z::Float64 = 0.0
             num_coords::UInt = 0
-            geometry = block_json["geometry"]["type"]
+            geometry = block_data["geometry"]["type"]
             if geometry == "Polygon"
-                for polygon::Vector{Any} in block_json["geometry"]["coordinates"]
+                for polygon::Vector{Any} in block_data["geometry"]["coordinates"]
                     (sx, sy, sz) = coords_sum(polygon)
                     sum_x += sx
                     sum_y += sy
                     sum_z += sz
-                    num_coords += size(polygon, 1)
+                    num_coords += length(polygon)
                 end
             elseif geometry == "MultiPolygon"
-                for multipolygon::Vector{Any} in block_json["geometry"]["coordinates"]
+                for multipolygon::Vector{Any} in block_data["geometry"]["coordinates"]
                     for polygon::Vector{Any} in multipolygon
                         (sx, sy, sz) = coords_sum(polygon)
                         sum_x += sx
                         sum_y += sy
                         sum_z += sz
-                        num_coords += size(polygon, 1)
+                        num_coords += length(polygon)
                     end
                 end
             end
@@ -148,17 +158,14 @@ function maybe_parse_county_populations(state_ids::AbstractVector{UInt})::String
             y::Float64 = Constants.earth_radius * sum_y / num_coords
             z::Float64 = Constants.earth_radius * sum_z / num_coords
 
-            # Initialize county data
-            props_json = block_json["properties"]
-            pop::Float64 = props_json["POP20"]
-            county_id = parse(UInt, props_json["COUNTYFP20"])
+            # Census block properties
+            block_props = block_data["properties"]
+            pop::Float64 = block_props["POP20"]
+            county_id = parse(UInt, block_props["COUNTYFP20"])
             geoid::UInt = state_id * 1000 + county_id
-            if !haskey(sums, geoid)
-                sums[geoid] = zeros(Float64, 7)
-            end
-            county_sums = sums[geoid]
 
-            # Record population and position of census block
+            # Accumulate sums
+            county_sums = thread_sums[Base.Threads.threadid()][geoid]
             county_sums[1] += pop * x
             county_sums[2] += pop * y
             county_sums[3] += pop * z
@@ -167,6 +174,14 @@ function maybe_parse_county_populations(state_ids::AbstractVector{UInt})::String
             county_sums[6] += pop * z * z
             county_sums[7] += pop
 
+        end
+
+        # Reduce sums across parallel threads
+        sums = DataStructures.DefaultDict{UInt, Array{Float64}}(make_sums)
+        for thread_sums_i in thread_sums
+            for (geoid, county_sums) in thread_sums_i
+                sums[geoid] += county_sums
+            end
         end
 
         # Compute population and position of counties
