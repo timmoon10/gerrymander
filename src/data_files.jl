@@ -235,9 +235,9 @@ end
 "Load county boundaries from file
 
 Each dict key corresponds to a county. Each county is composed of one
-or more polygons, which have one or more borders. Each border is a
-list of (x,y) coordinates that form a complete ring. The first border
-is the external border, and other borders are internal.
+or more polygons, which have one or more lines. Each line is a list of
+(x,y) coordinates that form a complete ring. The first line is the
+external border, and other lines are internal borders.
 
 "
 function load_county_boundaries()::Dict{UInt, Vector{Vector{Array{Float64, 2}}}}
@@ -259,12 +259,11 @@ function load_county_boundaries()::Dict{UInt, Vector{Vector{Array{Float64, 2}}}}
     "Parse polygon boundary"
     function parse_polygon(polygon_data::Vector{Any})::Vector{Array{Float64, 2}}
         polygon = Vector{Array{Float64, 2}}(undef, length(polygon_data))
-        @inbounds for (i, border_data::Vector{Any}) in enumerate(polygon_data)
-            @inbounds polygon[i] = Array{Float64, 2}(undef, (2, length(border_data)))
-            @inbounds border = polygon[i]
-            @inbounds for (j, coord::Vector{Float64}) in enumerate(border_data)
-                @inbounds border[1, j] = coord[1]
-                @inbounds border[2, j] = coord[2]
+        @inbounds for (i, line_data::Vector{Any}) in enumerate(polygon_data)
+            @inbounds line = polygon[i] = Array{Float64, 2}(undef, (2, length(line_data)))
+            @inbounds for (j, coord::Vector{Float64}) in enumerate(line_data)
+                @inbounds line[1, j] = coord[1]
+                @inbounds line[2, j] = coord[2]
             end
         end
         return polygon
