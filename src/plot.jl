@@ -2,9 +2,29 @@ module Plot
 
 import Base.Threads
 import DataStructures
+import GeoInterface
+import LibGEOS
 import Memoize
 import PyPlot
 import ..DataFiles
+
+@Memoize.memoize function color_list()::Vector{Tuple{Float64, Float64, Float64}}
+    colors = [
+        (86, 180, 233),
+        (213, 94, 0),
+        (0, 158, 115),
+        (240, 228, 66),
+        (0, 114, 178),
+        (204, 121, 167),
+        (230, 159, 0),
+    ]
+    return [(r/256, g/256, b/256) for (r, g, b) in colors]
+end
+
+function hash_color(x)::Tuple{Float64, Float64, Float64}
+    colors = color_list()
+    return colors[hash(x) % length(colors) + 1]
+end
 
 "Parameters for Lambert conformal conic projection"
 struct LambertProjection
@@ -161,19 +181,24 @@ function county_boundaries_to_lines(
 
 end
 
-struct Plotter
+mutable struct Plotter
+    county_ids::Vector{UInt}
+    partition_ids::Vector{UInt}
+    partition_to_counties::Dict{UInt, Set{UInt}}
     county_boundaries::Dict{UInt, Vector{Vector{Array{Float64, 2}}}}
     boundary_lines::Vector{Tuple{Vector{Float64}, Vector{Float64}}}
+    county_shapes::Dict{UInt, LibGEOS.MultiPolygon}
+    partition_shapes::Dict{UInt, LibGEOS.MultiPolygon}
 end
 
 function Plotter(
-    partitions::Dict{UInt, UInt},
+    county_to_partition::Dict{UInt, UInt},
     )::Plotter
 
     # Get lists of counties and partitions
     county_ids = Set{UInt}()
     partition_ids = Set{UInt}()
-    for (county_id, partition_id) in partitions
+    for (county_id, partition_id) in county_to_partition
         push!(county_ids, county_id)
         push!(partition_ids, partition_id)
     end
@@ -182,19 +207,27 @@ function Plotter(
     sort!(county_ids)
     sort!(partition_ids)
 
+    # Counties in each partition
+    partition_to_counties = Dict{UInt, Set{UInt}}(
+        partition_id => Set{UInt}() for partition_id in partition_ids)
+    for (county_id, partition_id) in county_to_partition
+        push!(partition_to_counties[partition_id], county_id)
+    end
+
     # Get county boundaries
     county_boundaries = Dict{UInt, Vector{Vector{Array{Float64, 2}}}}()
     let
         full_county_boundaries = DataFiles.load_county_boundaries()
-        for county_id in county_ids
+        @inbounds for county_id in county_ids
             county_boundaries[county_id] = full_county_boundaries[county_id]
         end
     end
 
-    # Convert coordinates to Lambert projection
-    lambert_projection = LambertProjection(county_boundaries)
-    @Base.Threads.threads for county_id in county_ids
-        multipolygon = county_boundaries[county_id]
+    "Apply Lambert projection in-place to multipolygon coordinates"
+    function multipolygon_to_lambert!(
+        multipolygon::Vector{Vector{Array{Float64, 2}}},
+        lambert_projection::LambertProjection,
+        )
         @inbounds for polygon in multipolygon
             @inbounds for line in polygon
                 @inbounds for i in 1:size(line, 2)
@@ -208,19 +241,136 @@ function Plotter(
         end
     end
 
+    # Convert coordinates to Lambert projection
+    lambert_projection = LambertProjection(county_boundaries)
+    @Base.Threads.threads for county_id in county_ids
+        multipolygon_to_lambert!(
+            county_boundaries[county_id],
+            lambert_projection,
+        )
+    end
+
     # Convert boundaries into lines
     boundary_lines = county_boundaries_to_lines(county_boundaries)
 
     # Construct plotter
-    return Plotter(county_boundaries, boundary_lines)
+    out = Plotter(
+        county_ids,
+        partition_ids,
+        partition_to_counties,
+        county_boundaries,
+        boundary_lines,
+        Dict{UInt, LibGEOS.MultiPolygon}(),
+        Dict{UInt, LibGEOS.MultiPolygon}(),
+    )
+    reset_shapes!(out, reset_counties=true, reset_partitions=true)
+    return out
+
+end
+
+function reset_shapes!(
+    plotter::Plotter;
+    reset_counties::Bool=true,
+    reset_partitions::Bool=true,
+    )::Plotter
+
+    # Objects from plotter
+    county_ids = plotter.county_ids
+    partition_ids = plotter.partition_ids
+    partition_to_counties = plotter.partition_to_counties
+    county_boundaries = plotter.county_boundaries
+
+    "Convert coordinates to format needed for LibGEOS.MultiPolygon"
+    function to_libgeos_multipolygon_coords(
+        multipolygon_in::Vector{Vector{Array{Float64, 2}}},
+        )::Vector{Vector{Vector{Vector{Float64}}}}
+        multipolygon_out = Vector{Vector{Vector{Vector{Float64}}}}(
+            undef,
+            length(multipolygon_in),
+        )
+        @inbounds for (polygon_id, polygon_in) in enumerate(multipolygon_in)
+            polygon_out = Vector{Vector{Vector{Float64}}}(undef, length(polygon_in))
+            @inbounds multipolygon_out[polygon_id] = polygon_out
+            @inbounds for (line_id, line_in) in enumerate(polygon_in)
+                num_points = size(line_in, 2)
+                line_out = Vector{Vector{Float64}}(undef, num_points)
+                @inbounds polygon_out[line_id] = line_out
+                @inbounds for point_id in 1:num_points
+                    @inbounds line_out[point_id] = [line_in[1, point_id], line_in[2, point_id]]
+                end
+            end
+        end
+        return multipolygon_out
+    end
+
+    # County shapes
+    LibGEOSMultiPolygonCoords = Vector{Vector{Vector{Vector{Float64}}}}
+    county_libgeos_coords = Vector{LibGEOSMultiPolygonCoords}(undef, length(county_ids))
+    county_shapes = Vector{LibGEOS.MultiPolygon}(undef, length(county_ids))
+    @Base.Threads.threads for i in 1:length(county_ids)
+        county_id = county_ids[i]
+        coords = to_libgeos_multipolygon_coords(county_boundaries[county_id])
+        county_libgeos_coords[i] = coords
+        if reset_counties
+            county_shapes[i] = LibGEOS.MultiPolygon(coords)
+        end
+    end
+    county_libgeos_coords = Dict{UInt, LibGEOSMultiPolygonCoords}(
+        county_ids[i] => coords
+        for (i, coords) in enumerate(county_libgeos_coords))
+    if reset_counties
+        county_shapes = Dict{UInt, LibGEOS.MultiPolygon}(
+            county_ids[i] => shape for (i, shape) in enumerate(county_shapes))
+        plotter.county_shapes = county_shapes
+    end
+
+    # Partition shapes
+    if reset_partitions
+        partition_shapes = Vector{LibGEOS.MultiPolygon}(undef, length(partition_ids))
+        @Base.Threads.threads for i in 1:length(partition_ids)
+            partition_id = partition_ids[i]
+            multipolygon = Vector{Vector{Vector{Vector{Float64}}}}()
+            @inbounds for county_id in partition_to_counties[partition_id]
+                coords = county_libgeos_coords[county_id]
+                append!(multipolygon, coords)
+            end
+            shape = LibGEOS.MultiPolygon(multipolygon)
+            shape = LibGEOS.unaryUnion(shape)
+            shape = LibGEOS.MultiPolygon(shape)
+            partition_shapes[i] = shape
+        end
+        partition_shapes = Dict{UInt, LibGEOS.MultiPolygon}(
+            partition_ids[i] => shape for (i, shape) in enumerate(partition_shapes))
+        plotter.partition_shapes = partition_shapes
+    end
+
+    return plotter
 
 end
 
 function plot(plotter::Plotter)
 
+    # Plot partitions
+    for (partition_id, shape) in plotter.partition_shapes
+        color = hash_color(partition_id)
+        multipolygon = GeoInterface.coordinates(shape)
+        @inbounds for polygon in multipolygon
+            @inbounds for line in polygon
+                x = Vector{Float64}(undef, length(line))
+                y = Vector{Float64}(undef, length(line))
+                @inbounds for (point_id, point) in enumerate(line)
+                    @inbounds x[point_id] = point[1]
+                    @inbounds y[point_id] = point[2]
+                end
+                PyPlot.fill(x, y, color=color)
+                PyPlot.plot(x, y, "k-", linewidth=2.5)
+            end
+        end
+    end
+
     # Plot county boundaries
     @inbounds for (x, y) in plotter.boundary_lines
-        PyPlot.plot(x, y, "k-", linewidth=0.5)
+        PyPlot.plot(x, y, "k-", linewidth=0.25)
     end
 
     # Show plot
