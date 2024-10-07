@@ -10,6 +10,7 @@ import Memoize
 import Serialization
 
 import ..Constants
+using ..Constants: MultiPolygonCoords, PolygonCoords
 
 @Memoize.memoize function root_dir()::String
     return realpath(dirname(realpath(@__DIR__)))
@@ -232,21 +233,13 @@ function load_county_populations(state_ids::AbstractVector{UInt})::Array{Any, 2}
 
 end
 
-"Load county boundaries from file
-
-Each dict key corresponds to a county. Each county is composed of one
-or more polygons, which have one or more lines. Each line is a list of
-(x,y) coordinates that form a complete ring. The first line is the
-external border, and other lines are internal borders.
-
-"
-function load_county_boundaries()::Dict{UInt, Vector{Vector{Array{Float64, 2}}}}
+function load_county_boundaries()::Dict{UInt, MultiPolygonCoords}
 
     # Return immediately if county boundary data file exists
     county_boundaries_file = joinpath(
         root_dir(),
         "results",
-        "county_populations.bin",
+        "county_boundaries.bin",
     )
     if isfile(county_boundaries_file)
         return Serialization.deserialize(county_boundaries_file)
@@ -257,21 +250,17 @@ function load_county_boundaries()::Dict{UInt, Vector{Vector{Array{Float64, 2}}}}
     geography_data = JSON.parsefile(json_file)["features"]
 
     "Parse polygon boundary"
-    function parse_polygon(polygon_data::Vector{Any})::Vector{Array{Float64, 2}}
-        polygon = Vector{Array{Float64, 2}}(undef, length(polygon_data))
-        @inbounds for (i, line_data::Vector{Any}) in enumerate(polygon_data)
-            @inbounds line = polygon[i] = Array{Float64, 2}(undef, (2, length(line_data)))
-            @inbounds for (j, coord::Vector{Float64}) in enumerate(line_data)
-                @inbounds line[1, j] = coord[1]
-                @inbounds line[2, j] = coord[2]
-            end
+    function parse_polygon(polygon_data::Vector{Any})::PolygonCoords
+        polygon = Vector{Vector{Vector{Float64}}}(undef, length(polygon_data))
+        @inbounds for (line_id, line_data::Vector{Any}) in enumerate(polygon_data)
+            @inbounds polygon[line_id] = [coord for coord in line_data]
         end
         return polygon
     end
 
     # Parse county boundaries
     println("Parsing county boundaries...")
-    county_boundaries = Dict{UInt, Vector{Vector{Array{Float64, 2}}}}()
+    county_boundaries = Dict{UInt, MultiPolygonCoords}()
     for county_data in geography_data
         id = parse(UInt, county_data["properties"]["GEOID"])
         geometry_type = county_data["geometry"]["type"]

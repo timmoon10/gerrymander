@@ -6,7 +6,9 @@ import GeoInterface
 import LibGEOS
 import Memoize
 import PyPlot
+
 import ..DataFiles
+using ..Constants: MultiPolygonCoords
 
 @Memoize.memoize function color_list()::Vector{Tuple{Float64, Float64, Float64}}
     colors = [
@@ -36,7 +38,7 @@ struct LambertProjection
 end
 
 function LambertProjection(
-    county_boundaries::Dict{UInt, Vector{Vector{Array{Float64, 2}}}},
+    county_boundaries::Dict{UInt, MultiPolygonCoords},
     )::LambertProjection
 
     # Determine region boundaries
@@ -46,10 +48,9 @@ function LambertProjection(
     max_lat::Float64 = -90.0
     @inbounds for multipolygon in values(county_boundaries)
         @inbounds for polygon in multipolygon
-            @inbounds line = polygon[1]  # External border
-            @inbounds for j in 1:size(line, 2)
-                @inbounds long::Float64 = line[1, j]
-                @inbounds lat::Float64 = line[2, j]
+            @inbounds for coord in polygon[1]
+                @inbounds long::Float64 = coord[1]
+                @inbounds lat::Float64 = coord[2]
                 min_long = min(long, min_long)
                 max_long = max(long, max_long)
                 min_lat = min(lat, min_lat)
@@ -94,33 +95,33 @@ function (lambert_projection::LambertProjection)(
 end
 
 function county_boundaries_to_lines(
-    county_boundaries::Dict{UInt, Vector{Vector{Array{Float64, 2}}}},
+    county_boundaries::Dict{UInt, MultiPolygonCoords},
     )::Vector{Tuple{Vector{Float64}, Vector{Float64}}}
 
     "Convert boundaries into line segments"
     function make_segments(
-        county_boundaries::Dict{UInt, Vector{Vector{Array{Float64, 2}}}},
-        )::Dict{Tuple{Float64, Float64}, Set{Tuple{Float64, Float64}}}
-        segments = Dict{Tuple{Float64, Float64}, Set{Tuple{Float64, Float64}}}()
+        county_boundaries::Dict{UInt, MultiPolygonCoords},
+        )::Dict{Vector{Float64}, Set{Vector{Float64}}}
+        segments = Dict{Vector{Float64}, Set{Vector{Float64}}}()
         @inbounds for multipolygon in values(county_boundaries)
             @inbounds for polygon in multipolygon
                 @inbounds for line in polygon
 
                     # Skip if current line is empty
-                    num_segments = size(line, 2) - 1
+                    num_segments = length(line) - 1
                     if num_segments < 1
                         continue
                     end
 
                     # Break down line into line segments
-                    @inbounds coord1 = (line[1, 1], line[2, 1])
+                    @inbounds coord1 = line[1]
                     if !haskey(segments, coord1)
-                        segments[coord1] = Set{Tuple{Float64, Float64}}()
+                        segments[coord1] = Set{Vector{Float64}}()
                     end
                     @inbounds for i in 1:num_segments
-                        @inbounds coord2 = (line[1, i+1], line[2, i+1])
+                        @inbounds coord2 = line[i+1]
                         if !haskey(segments, coord2)
-                            segments[coord2] = Set{Tuple{Float64, Float64}}()
+                            segments[coord2] = Set{Vector{Vector{Float64}}}()
                         end
                         push!(segments[coord1], coord2)
                         push!(segments[coord2], coord1)
@@ -135,8 +136,8 @@ function county_boundaries_to_lines(
 
     "Traverse line segments, removing as we go"
     function walk_segments!(
-        segments::Dict{Tuple{Float64, Float64}, Set{Tuple{Float64, Float64}}},
-        coord::Tuple{Float64, Float64},
+        segments::Dict{Vector{Float64}, Set{Vector{Float64}}},
+        coord::Vector{Float64},
         )::Tuple{Vector{Float64}, Vector{Float64}}
 
         # Walk over segments until stuck
@@ -185,7 +186,7 @@ mutable struct Plotter
     county_ids::Vector{UInt}
     partition_ids::Vector{UInt}
     partition_to_counties::Dict{UInt, Set{UInt}}
-    county_boundaries::Dict{UInt, Vector{Vector{Array{Float64, 2}}}}
+    county_boundaries::Dict{UInt, MultiPolygonCoords}
     boundary_lines::Vector{Tuple{Vector{Float64}, Vector{Float64}}}
     county_shapes::Dict{UInt, LibGEOS.MultiPolygon}
     partition_shapes::Dict{UInt, LibGEOS.MultiPolygon}
@@ -215,7 +216,7 @@ function Plotter(
     end
 
     # Get county boundaries
-    county_boundaries = Dict{UInt, Vector{Vector{Array{Float64, 2}}}}()
+    county_boundaries = Dict{UInt, MultiPolygonCoords}()
     let
         full_county_boundaries = DataFiles.load_county_boundaries()
         @inbounds for county_id in county_ids
@@ -225,17 +226,17 @@ function Plotter(
 
     "Apply Lambert projection in-place to multipolygon coordinates"
     function multipolygon_to_lambert!(
-        multipolygon::Vector{Vector{Array{Float64, 2}}},
+        multipolygon::MultiPolygonCoords,
         lambert_projection::LambertProjection,
         )
         @inbounds for polygon in multipolygon
             @inbounds for line in polygon
-                @inbounds for i in 1:size(line, 2)
-                    @inbounds long = line[1,i]
-                    @inbounds lat = line[2,i]
+                @inbounds for coord in line
+                    @inbounds long = coord[1]
+                    @inbounds lat = coord[2]
                     (x, y) = lambert_projection(long, lat)
-                    @inbounds line[1,i] = x
-                    @inbounds line[2,i] = y
+                    @inbounds coord[1] = x
+                    @inbounds coord[2] = y
                 end
             end
         end
@@ -280,45 +281,13 @@ function reset_shapes!(
     partition_to_counties = plotter.partition_to_counties
     county_boundaries = plotter.county_boundaries
 
-    "Convert coordinates to format needed for LibGEOS.MultiPolygon"
-    function to_libgeos_multipolygon_coords(
-        multipolygon_in::Vector{Vector{Array{Float64, 2}}},
-        )::Vector{Vector{Vector{Vector{Float64}}}}
-        multipolygon_out = Vector{Vector{Vector{Vector{Float64}}}}(
-            undef,
-            length(multipolygon_in),
-        )
-        @inbounds for (polygon_id, polygon_in) in enumerate(multipolygon_in)
-            polygon_out = Vector{Vector{Vector{Float64}}}(undef, length(polygon_in))
-            @inbounds multipolygon_out[polygon_id] = polygon_out
-            @inbounds for (line_id, line_in) in enumerate(polygon_in)
-                num_points = size(line_in, 2)
-                line_out = Vector{Vector{Float64}}(undef, num_points)
-                @inbounds polygon_out[line_id] = line_out
-                @inbounds for point_id in 1:num_points
-                    @inbounds line_out[point_id] = [line_in[1, point_id], line_in[2, point_id]]
-                end
-            end
-        end
-        return multipolygon_out
-    end
-
     # County shapes
-    LibGEOSMultiPolygonCoords = Vector{Vector{Vector{Vector{Float64}}}}
-    county_libgeos_coords = Vector{LibGEOSMultiPolygonCoords}(undef, length(county_ids))
-    county_shapes = Vector{LibGEOS.MultiPolygon}(undef, length(county_ids))
-    @Base.Threads.threads for i in 1:length(county_ids)
-        county_id = county_ids[i]
-        coords = to_libgeos_multipolygon_coords(county_boundaries[county_id])
-        county_libgeos_coords[i] = coords
-        if reset_counties
-            county_shapes[i] = LibGEOS.MultiPolygon(coords)
-        end
-    end
-    county_libgeos_coords = Dict{UInt, LibGEOSMultiPolygonCoords}(
-        county_ids[i] => coords
-        for (i, coords) in enumerate(county_libgeos_coords))
     if reset_counties
+        county_shapes = Vector{LibGEOS.MultiPolygon}(undef, length(county_ids))
+        @Base.Threads.threads for i in 1:length(county_ids)
+            multipolygon = county_boundaries[county_ids[i]]
+            county_shapes[i] = LibGEOS.MultiPolygon(multipolygon)
+        end
         county_shapes = Dict{UInt, LibGEOS.MultiPolygon}(
             county_ids[i] => shape for (i, shape) in enumerate(county_shapes))
         plotter.county_shapes = county_shapes
@@ -328,16 +297,14 @@ function reset_shapes!(
     if reset_partitions
         partition_shapes = Vector{LibGEOS.MultiPolygon}(undef, length(partition_ids))
         @Base.Threads.threads for i in 1:length(partition_ids)
-            partition_id = partition_ids[i]
-            multipolygon = Vector{Vector{Vector{Vector{Float64}}}}()
-            @inbounds for county_id in partition_to_counties[partition_id]
-                coords = county_libgeos_coords[county_id]
-                append!(multipolygon, coords)
+            multipolygon = MultiPolygonCoords()
+            @inbounds for county_id in partition_to_counties[partition_ids[i]]
+                append!(multipolygon, county_boundaries[county_id])
             end
-            shape = LibGEOS.MultiPolygon(multipolygon)
-            shape = LibGEOS.unaryUnion(shape)
-            shape = LibGEOS.MultiPolygon(shape)
-            partition_shapes[i] = shape
+            multipolygon = LibGEOS.MultiPolygon(multipolygon)
+            multipolygon = LibGEOS.unaryUnion(multipolygon)
+            multipolygon = LibGEOS.MultiPolygon(multipolygon)
+            partition_shapes[i] = multipolygon
         end
         partition_shapes = Dict{UInt, LibGEOS.MultiPolygon}(
             partition_ids[i] => shape for (i, shape) in enumerate(partition_shapes))
