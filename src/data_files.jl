@@ -87,15 +87,11 @@ population, x-coordinate, y-coordinate, z-coordinate, variance.
 "
 function load_county_populations(state_ids::AbstractVector{UInt})::Array{Any, 2}
 
-    # Return immediately if county population data file exists
-    county_populations_file = joinpath(
-        root_dir(),
-        "results",
-        "county_populations.tsv",
-    )
-    if isfile(county_populations_file)
+    # Return immediately if cached data exists
+    cache_file = joinpath(root_dir(), "results", "county_populations.tsv")
+    if isfile(cache_file)
         (county_data, _) = DelimitedFiles.readdlm(
-            county_populations_file,
+            cache_file,
             '\t',
             header=true,
         )
@@ -228,7 +224,7 @@ function load_county_populations(state_ids::AbstractVector{UInt})::Array{Any, 2}
 
     # Output results to file
     println("Saving county populations...")
-    DelimitedFiles.writedlm(county_populations_file, county_data, '\t')
+    DelimitedFiles.writedlm(cache_file, county_data, '\t')
     return county_data[2:end, :]
 
 end
@@ -236,13 +232,9 @@ end
 function load_county_boundaries()::Dict{UInt, MultiPolygonCoords}
 
     # Return immediately if county boundary data file exists
-    county_boundaries_file = joinpath(
-        root_dir(),
-        "results",
-        "county_boundaries.bin",
-    )
-    if isfile(county_boundaries_file)
-        return Serialization.deserialize(county_boundaries_file)
+    cache_file = joinpath(root_dir(), "results", "county_boundaries.bin")
+    if isfile(cache_file)
+        return Serialization.deserialize(cache_file)
     end
 
     # Get geography data
@@ -277,7 +269,7 @@ function load_county_boundaries()::Dict{UInt, MultiPolygonCoords}
 
     # Write results to file
     println("Saving county boundaries...")
-    Serialization.serialize(county_boundaries_file, county_boundaries)
+    Serialization.serialize(cache_file, county_boundaries)
     return county_boundaries
 
 end
