@@ -223,8 +223,8 @@ function load_county_populations(state_ids::AbstractVector{UInt})::Array{Any, 2}
     end
 
     # Output results to file
-    println("Saving county populations...")
     DelimitedFiles.writedlm(cache_file, county_data, '\t')
+    println("Saved county populations at $cache_file...")
     return county_data[2:end, :]
 
 end
@@ -234,7 +234,29 @@ function load_county_boundaries()::Dict{UInt, MultiPolygonCoords}
     # Return immediately if county boundary data file exists
     cache_file = joinpath(root_dir(), "results", "county_boundaries.bin")
     if isfile(cache_file)
-        return Serialization.deserialize(cache_file)
+        cache_county_boundaries = Serialization.deserialize(cache_file)
+        county_ids = collect(keys(cache_county_boundaries))
+        county_boundaries = Vector{MultiPolygonCoords}(undef, length(county_ids))
+        @Base.Threads.threads for i in 1:length(county_ids)
+            cache_multipolygon = cache_county_boundaries[county_ids[i]]
+            multipolygon = MultiPolygonCoords(undef, length(cache_multipolygon))
+            county_boundaries[i] = multipolygon
+            @inbounds for (polygon_id, cache_polygon) in enumerate(cache_multipolygon)
+                polygon = PolygonCoords(undef, length(cache_polygon))
+                @inbounds multipolygon[polygon_id] = polygon
+                @inbounds for (line_id, cache_line) in enumerate(cache_polygon)
+                    line = Vector{Vector{Float64}}(undef, size(cache_line, 2))
+                    @inbounds polygon[line_id] = line
+                    for point_id in 1:size(cache_line, 2)
+                        @inbounds line[point_id] = [
+                            cache_line[1, point_id], cache_line[2, point_id]]
+                    end
+                end
+            end
+        end
+        county_boundaries = Dict{UInt, MultiPolygonCoords}(
+            id => county_boundaries[i] for (i, id) in enumerate(county_ids))
+        return county_boundaries
     end
 
     # Get geography data
@@ -268,8 +290,30 @@ function load_county_boundaries()::Dict{UInt, MultiPolygonCoords}
     end
 
     # Write results to file
-    println("Saving county boundaries...")
-    Serialization.serialize(cache_file, county_boundaries)
+    # Note: Serialized county boundaries store lines as 2D array
+    # instead of vector of vectors to reduce dynamic dispatches.
+    county_ids = collect(keys(county_boundaries))
+    cache_county_boundaries = Vector{Vector{Vector{Array{Float64, 2}}}}(undef, length(county_ids))
+    @Base.Threads.threads for i in 1:length(county_ids)
+        multipolygon = county_boundaries[county_ids[i]]
+        cache_multipolygon = Vector{Vector{Array{Float64, 2}}}(undef, length(multipolygon))
+        @inbounds cache_county_boundaries[i] = cache_multipolygon
+        for (polygon_id, polygon) in enumerate(multipolygon)
+            cache_polygon = Vector{Array{Float64, 2}}(undef, length(polygon))
+            @inbounds cache_multipolygon[polygon_id] = cache_polygon
+            for (line_id, line) in enumerate(polygon)
+                cache_line = Array{Float64, 2}(undef, (2, length(line)))
+                @inbounds cache_polygon[line_id] = cache_line
+                @inbounds for (coord_id, coord) in enumerate(line)
+                    @inbounds cache_line[:, coord_id] = coord
+                end
+            end
+        end
+    end
+    cache_county_boundaries = Dict{UInt, Vector{Vector{Array{Float64, 2}}}}(
+        id => cache_county_boundaries[i] for (i, id) in enumerate(county_ids))
+    Serialization.serialize(cache_file, cache_county_boundaries)
+    println("Saved county boundaries at $cache_file...")
     return county_boundaries
 
 end

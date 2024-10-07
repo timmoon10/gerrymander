@@ -330,7 +330,7 @@ function plot(plotter::Plotter)
                     @inbounds y[point_id] = point[2]
                 end
                 PyPlot.fill(x, y, color=color)
-                PyPlot.plot(x, y, "k-", linewidth=2.5)
+                PyPlot.plot(x, y, "k-", linewidth=1)
             end
         end
     end

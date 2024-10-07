@@ -83,8 +83,8 @@ function county_adjacency_graph(
     end
 
     # Write results to file
-    println("Saving county adjacency graph...")
     Serialization.serialize(cache_file, graph)
+    println("Saved county adjacency graph at $cache_file...")
     return graph
 
 end
@@ -173,8 +173,8 @@ function county_interaction_graph(
     end
 
     # Write results to file
-    println("Saving county interaction graph...")
     Serialization.serialize(cache_file, graph)
+    println("Saved county interaction graph at $cache_file...")
     return graph
 
 end
