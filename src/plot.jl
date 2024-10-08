@@ -23,9 +23,9 @@ using ..Constants: MultiPolygonCoords
     return [(r/256, g/256, b/256) for (r, g, b) in colors]
 end
 
-function hash_color(x)::Tuple{Float64, Float64, Float64}
+function pick_color(i::UInt)::Tuple{Float64, Float64, Float64}
     colors = color_list()
-    return colors[hash(x) % length(colors) + 1]
+    return colors[i % length(colors) + 1]
 end
 
 "Parameters for Lambert conformal conic projection"
@@ -319,7 +319,7 @@ function plot(plotter::Plotter)
 
     # Plot partitions
     for (partition_id, shape) in plotter.partition_shapes
-        color = hash_color(partition_id)
+        color = pick_color(partition_id)
         multipolygon = GeoInterface.coordinates(shape)
         @inbounds for polygon in multipolygon
             @inbounds for line in polygon
