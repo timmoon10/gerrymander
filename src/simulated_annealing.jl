@@ -62,6 +62,7 @@ end
 
 function voronoi_partition(
     num_partitions::UInt,
+    graph::Graph.WeightedGraph,
     state_ids::AbstractVector{UInt},
     )::Tuple{Dict{UInt, UInt}, Dict{UInt, Set{UInt}}}
 
@@ -120,7 +121,7 @@ function voronoi_partition(
         county_to_partition,
         partition_to_counties,
         center_ids,
-        DataGraphs.county_adjacency_graph(state_ids),
+        graph,
     )
 
     return (county_to_partition, partition_to_counties)
@@ -164,6 +165,7 @@ function Partitioner(
     # Initial partition
     (county_to_partition, partition_to_counties) = voronoi_partition(
         num_partitions,
+        adjacency_graph,
         state_ids,
     )
     partition_populations = Dict{UInt, UInt}()
@@ -173,23 +175,74 @@ function Partitioner(
         )
     end
 
-    ### TODO
-    candidate_swaps = Dict{UInt, Vector{Tuple{UInt, Float64}}}()
-
     # Plotter
     plotter = Plot.Plotter(county_to_partition)
 
     # Construct partitioner object
-    return Partitioner(
+    partitioner = Partitioner(
         adjacency_graph,
         interaction_graph,
         county_to_partition,
         partition_to_counties,
         county_populations,
         partition_populations,
-        candidate_swaps,
+        Dict{UInt, Vector{Tuple{UInt, Float64}}}(),  # candidate_swaps
         plotter,
     )
+
+    # Find swap candidates
+    for county_id in county_ids
+        update_county_swap_candidates!(partitioner, county_id)
+    end
+
+    return partitioner
+
+end
+
+function update_county_swap_candidates!(
+    partitioner::Partitioner,
+    county_id::UInt,
+    )
+
+    # Get partitions adjacent to county
+    partition_id = partitioner.county_to_partition[county_id]
+    neighbor_partitions = Set{UInt}([partition_id])
+    for (neighbor_id, _) in partitioner.adjacency_graph[county_id]
+        push!(
+            neighbor_partitions,
+            partitioner.county_to_partition[neighbor_id],
+        )
+    end
+
+    # Return immediately if county is within partition interior
+    if length(neighbor_partitions) == 1
+        delete!(partitioner.swap_candidates, county_id)
+        return
+    end
+
+    # Compute affinity to partitions
+    partition_affinities = DataStructures.OrderedDict{UInt, Float64}(
+        id => 0 for id in neighbor_partitions)
+    for (neighbor_id, affinity) in partitioner.interaction_graph[county_id]
+        if neighbor_id == county_id
+            continue
+        end
+        neighbor_partition_id = partitioner.county_to_partition[neighbor_id]
+        if haskey(partition_affinities, neighbor_partition_id)
+            partition_affinities[neighbor_partition_id] += affinity
+        end
+    end
+
+    # Get sorted list of neighboring partitions
+    delete!(neighbor_partitions, partition_id)
+    neighbor_partitions = collect(neighbor_partitions)
+    sort!(neighbor_partitions)
+
+    # Update list of swap candidates
+    self_affinity = partition_affinities[partition_id]
+    partitioner.swap_candidates[county_id] = [
+        (id, partition_affinities[id] - self_affinity)
+        for id in neighbor_partitions]
 
 end
 
