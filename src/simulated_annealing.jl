@@ -250,4 +250,134 @@ function update_county_swap_candidates!(
 
 end
 
+function can_swap_county(
+    partitioner::Partitioner,
+    county_id::UInt,
+    )::Bool
+
+    # Get neighboring counties in same partition
+    partition_id = partitioner.county_to_partition[county_id]
+    neighbors = Set{UInt}()
+    for neighbor_id in keys(partitioner.adjacency_graph[county_id])
+        if partitioner.county_to_partition[neighbor_id] == partition_id
+            push!(neighbors, neighbor_id)
+        end
+    end
+
+    # Cannot swap isolated counties
+    if isempty(neighbors)
+        return false
+    end
+
+    # BFS over neighboring counties
+    start_id = pop!(neighbors)
+    not_visited = neighbors
+    search_queue = DataStructures.Queue{UInt}()
+    DataStructures.enqueue!(search_queue, start_id)
+    while !isempty(search_queue)
+        current = DataStructures.dequeue!(search_queue)
+        for neighbor in keys(partitioner.adjacency_graph[current])
+            if in(neighbor, not_visited)
+                delete!(not_visited, neighbor)
+                DataStructures.enqueue!(search_queue, neighbor)
+            end
+        end
+    end
+
+    # Cannot swap if all neighboring counties are not reachable by
+    # local BFS
+    return isempty(not_visited)
+
+end
+
+function swap_county!(
+    partitioner::Partitioner,
+    county_id::UInt,
+    partition_id::UInt;
+    update_plotter::Bool=false,
+    )
+
+    # Source and destination partitions
+    src_partition_id = partitioner.county_to_partition[county_id]
+    dst_partition_id = partition_id
+    if dst_partition_id == src_partition_id
+        return
+    end
+
+    # Update partitions
+    partitioner.county_to_partition[county_id] = dst_partition_id
+    delete!(partitioner.partition_to_counties[src_partition_id], county_id)
+    push!(partitioner.partition_to_counties[dst_partition_id], county_id)
+
+    # Update partition populations
+    county_population = partitioner.county_populations[county_id]
+    partitioner.partition_populations[src_partition_id] -= county_population
+    partitioner.partition_populations[dst_partition_id] += county_population
+
+    # Update swap candidates
+    neighborhood = Set{UInt}([county_id])
+    for neighbor in keys(partitioner.adjacency_graph[county_id])
+        push!(neighborhood, neighbor)
+    end
+    for neighbor in keys(partitioner.interaction_graph[county_id])
+        push!(neighborhood, neighbor)
+    end
+    @Base.Threads.threads for county_id in collect(neighborhood)
+        update_county_swap_candidates!(partitioner, county_id)
+    end
+
+    # Update plotter
+    if update_plotter
+        plotter = partitioner.plotter
+        plotter.county_to_partition = partitioner.county_to_partition
+        plotter.partition_to_counties = partitioner.partition_to_counties
+        Plot.reset_shapes!(plotter, reset_partitions=true)
+    end
+
+end
+
+function step!(
+    partitioner::Partitioner;
+    update_plotter::Bool=false,
+    )
+
+    # Flatten candidate swaps and scores
+    swaps = Vector{Tuple{UInt, UInt}}()
+    scores = Vector{Float64}()
+    for (county_id, county_swaps) in partitioner.swap_candidates
+        for (partition_id, affinity) in county_swaps
+            push!(swaps, (county_id, partition_id))
+            push!(scores, 1.0)  ### TODO Use affinity
+        end
+    end
+
+    # Return immediately if there are no candidate swaps
+    if isempty(swaps)
+        return
+    end
+
+    # Convert scores to cumulative sum
+    @inbounds for i in 1:length(scores)-1
+        scores[i+1] += scores[i]
+    end
+    prob_denom = scores[end]
+
+    # Pick county to swap and perform swap
+    while true
+        rand = Random.rand(Float64)
+        i = Base.Sort.searchsortedfirst(scores, rand * prob_denom)
+        (county_id, partition_id) = swaps[i]
+        if can_swap_county(partitioner, county_id)
+            swap_county!(
+                partitioner,
+                county_id,
+                partition_id,
+                update_plotter=update_plotter,
+            )
+            break
+        end
+    end
+
+end
+
 end  # module SimulatedAnnealing

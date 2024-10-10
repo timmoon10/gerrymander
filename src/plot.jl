@@ -185,6 +185,7 @@ end
 mutable struct Plotter
     county_ids::Vector{UInt}
     partition_ids::Vector{UInt}
+    county_to_partition::Dict{UInt, UInt}
     partition_to_counties::Dict{UInt, Set{UInt}}
     county_boundaries::Dict{UInt, MultiPolygonCoords}
     boundary_lines::Vector{Tuple{Vector{Float64}, Vector{Float64}}}
@@ -258,6 +259,7 @@ function Plotter(
     out = Plotter(
         county_ids,
         partition_ids,
+        county_to_partition,
         partition_to_counties,
         county_boundaries,
         boundary_lines,

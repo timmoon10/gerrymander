@@ -19,6 +19,16 @@ function main()
         max_distance,
     )
 
+    # Perform simulated annealing
+    num_steps = 100
+    for step in 1:num_steps
+        update_plotter = step == num_steps
+        Gerrymander.SimulatedAnnealing.step!(
+            partitioner,
+            update_plotter=update_plotter,
+        )
+    end
+
     # Plot
     Gerrymander.Plot.plot(partitioner.plotter)
 
