@@ -1,5 +1,6 @@
 module SimulatedAnnealing
 
+import Base.Threads
 import DataStructures
 import Random
 
@@ -135,7 +136,7 @@ mutable struct Partitioner
     partition_to_counties::Dict{UInt, Set{UInt}}
     county_populations::Dict{UInt, UInt}
     partition_populations::Dict{UInt, UInt}
-    swap_candidates::Dict{UInt, Vector{Tuple{UInt, Float64}}}
+    swap_candidates::Dict{UInt, Dict{UInt, Float64}}
     plotter::Plot.Plotter
 end
 
@@ -175,6 +176,10 @@ function Partitioner(
         )
     end
 
+    # Candidate county swaps
+    swaps_candidates = Dict{UInt, Dict{UInt, Float64}}(
+        id => Dict{UInt, Float64}() for id in county_ids)
+
     # Plotter
     plotter = Plot.Plotter(county_to_partition)
 
@@ -186,12 +191,12 @@ function Partitioner(
         partition_to_counties,
         county_populations,
         partition_populations,
-        Dict{UInt, Vector{Tuple{UInt, Float64}}}(),  # candidate_swaps
+        swaps_candidates,
         plotter,
     )
 
     # Find swap candidates
-    for county_id in county_ids
+    @Base.Threads.threads for county_id in county_ids
         update_county_swap_candidates!(partitioner, county_id)
     end
 
@@ -203,6 +208,10 @@ function update_county_swap_candidates!(
     partitioner::Partitioner,
     county_id::UInt,
     )
+
+    # Reset list of swap candidates
+    swap_candidates = partitioner.swap_candidates[county_id]
+    empty!(swap_candidates)
 
     # Get partitions adjacent to county
     partition_id = partitioner.county_to_partition[county_id]
@@ -216,7 +225,6 @@ function update_county_swap_candidates!(
 
     # Return immediately if county is within partition interior
     if length(neighbor_partitions) == 1
-        delete!(partitioner.swap_candidates, county_id)
         return
     end
 
@@ -233,16 +241,12 @@ function update_county_swap_candidates!(
         end
     end
 
-    # Get sorted list of neighboring partitions
-    delete!(neighbor_partitions, partition_id)
-    neighbor_partitions = collect(neighbor_partitions)
-    sort!(neighbor_partitions)
-
     # Update list of swap candidates
     self_affinity = partition_affinities[partition_id]
-    partitioner.swap_candidates[county_id] = [
-        (id, partition_affinities[id] - self_affinity)
-        for id in neighbor_partitions]
+    delete!(neighbor_partitions, partition_id)
+    for id in neighbor_partitions
+        swap_candidates[id] = partition_affinities[id] - self_affinity
+    end
 
 end
 
