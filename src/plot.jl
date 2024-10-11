@@ -9,6 +9,7 @@ import PyPlot
 
 import ..DataFiles
 using ..Constants: MultiPolygonCoords
+import .Gerrymander
 
 @Memoize.memoize function color_list()::Vector{Tuple{Float64, Float64, Float64}}
     colors = [
@@ -182,25 +183,25 @@ function county_boundaries_to_lines(
 
 end
 
+# x- and y-coordinates for a line
+PlotLine = Tuple{Vector{Float64}, Vector{Float64}}
+
 mutable struct Plotter
+    partitioner::Any
     county_ids::Vector{UInt}
     partition_ids::Vector{UInt}
-    county_to_partition::Dict{UInt, UInt}
-    partition_to_counties::Dict{UInt, Set{UInt}}
     county_boundaries::Dict{UInt, MultiPolygonCoords}
-    boundary_lines::Vector{Tuple{Vector{Float64}, Vector{Float64}}}
-    county_shapes::Dict{UInt, LibGEOS.MultiPolygon}
-    partition_shapes::Dict{UInt, LibGEOS.MultiPolygon}
+    boundary_lines::Vector{PlotLine}
 end
 
 function Plotter(
-    county_to_partition::Dict{UInt, UInt},
+    partitioner::Any,
     )::Plotter
 
     # Get lists of counties and partitions
     county_ids = Set{UInt}()
     partition_ids = Set{UInt}()
-    for (county_id, partition_id) in county_to_partition
+    for (county_id, partition_id) in partitioner.county_to_partition
         push!(county_ids, county_id)
         push!(partition_ids, partition_id)
     end
@@ -208,13 +209,6 @@ function Plotter(
     partition_ids = collect(partition_ids)
     sort!(county_ids)
     sort!(partition_ids)
-
-    # Counties in each partition
-    partition_to_counties = Dict{UInt, Set{UInt}}(
-        partition_id => Set{UInt}() for partition_id in partition_ids)
-    for (county_id, partition_id) in county_to_partition
-        push!(partition_to_counties[partition_id], county_id)
-    end
 
     # Get county boundaries
     county_boundaries = Dict{UInt, MultiPolygonCoords}()
@@ -257,80 +251,78 @@ function Plotter(
 
     # Construct plotter
     out = Plotter(
+        partitioner,
         county_ids,
         partition_ids,
-        county_to_partition,
-        partition_to_counties,
         county_boundaries,
         boundary_lines,
-        Dict{UInt, LibGEOS.MultiPolygon}(),
-        Dict{UInt, LibGEOS.MultiPolygon}(),
     )
-    reset_shapes!(out, reset_counties=true, reset_partitions=true)
     return out
 
 end
 
-function reset_shapes!(
-    plotter::Plotter;
-    reset_counties::Bool=true,
-    reset_partitions::Bool=true,
-    )::Plotter
+function make_partition_shapes(plotter)::Dict{UInt, Vector{Vector{PlotLine}}}
 
     # Objects from plotter
-    county_ids = plotter.county_ids
     partition_ids = plotter.partition_ids
-    partition_to_counties = plotter.partition_to_counties
+    partition_to_counties = plotter.partitioner.partition_to_counties
     county_boundaries = plotter.county_boundaries
 
-    # County shapes
-    if reset_counties
-        county_shapes = Vector{LibGEOS.MultiPolygon}(undef, length(county_ids))
-        @Base.Threads.threads for i in 1:length(county_ids)
-            multipolygon = county_boundaries[county_ids[i]]
-            county_shapes[i] = LibGEOS.MultiPolygon(multipolygon)
-        end
-        county_shapes = Dict{UInt, LibGEOS.MultiPolygon}(
-            county_ids[i] => shape for (i, shape) in enumerate(county_shapes))
-        plotter.county_shapes = county_shapes
-    end
+    # Iterate through partitions
+    partition_shapes = Vector{Vector{Vector{PlotLine}}}(undef, length(partition_ids))
+    @Base.Threads.threads for i in 1:length(partition_ids)
 
-    # Partition shapes
-    if reset_partitions
-        partition_shapes = Vector{LibGEOS.MultiPolygon}(undef, length(partition_ids))
-        @Base.Threads.threads for i in 1:length(partition_ids)
-            multipolygon = MultiPolygonCoords()
-            @inbounds for county_id in partition_to_counties[partition_ids[i]]
-                append!(multipolygon, county_boundaries[county_id])
+        # Get county shapes
+        multipolygon = MultiPolygonCoords()
+        @inbounds for county_id in partition_to_counties[partition_ids[i]]
+            append!(multipolygon, county_boundaries[county_id])
+        end
+
+        # Compute union of county shapes
+        multipolygon = LibGEOS.MultiPolygon(multipolygon)
+        multipolygon = LibGEOS.unaryUnion(multipolygon)
+        multipolygon = LibGEOS.MultiPolygon(multipolygon)
+        multipolygon = GeoInterface.coordinates(multipolygon)
+
+        # Convert partition shape to lines
+        plot_multipolygon = Vector{Vector{PlotLine}}()
+        sizehint!(plot_multipolygon, length(multipolygon))
+        @inbounds for polygon in multipolygon
+            plot_polygon = Vector{Tuple{Vector{Float64}, Vector{Float64}}}()
+            push!(plot_multipolygon, plot_polygon)
+            sizehint!(plot_polygon, length(polygon))
+            @inbounds for line in polygon
+                x = Vector{Float64}()
+                y = Vector{Float64}()
+                push!(plot_polygon, (x, y))
+                sizehint!(x, length(line))
+                sizehint!(y, length(line))
+                @inbounds for point in line
+                    @inbounds push!(x, point[1])
+                    @inbounds push!(y, point[2])
+                end
             end
-            multipolygon = LibGEOS.MultiPolygon(multipolygon)
-            multipolygon = LibGEOS.unaryUnion(multipolygon)
-            multipolygon = LibGEOS.MultiPolygon(multipolygon)
-            partition_shapes[i] = multipolygon
         end
-        partition_shapes = Dict{UInt, LibGEOS.MultiPolygon}(
-            partition_ids[i] => shape for (i, shape) in enumerate(partition_shapes))
-        plotter.partition_shapes = partition_shapes
-    end
+        partition_shapes[i] = plot_multipolygon
 
-    return plotter
+    end
+    partition_shapes = Dict{UInt, Vector{Vector{PlotLine}}}(
+        partition_ids[i] => shape for (i, shape) in enumerate(partition_shapes))
+
+    return partition_shapes
 
 end
 
 function plot(plotter::Plotter)
 
+    # Compute partition shapes
+    partition_shapes = make_partition_shapes(plotter)
+
     # Plot partitions
-    for (partition_id, shape) in plotter.partition_shapes
+    for partition_id in plotter.partition_ids
         color = pick_color(partition_id)
-        multipolygon = GeoInterface.coordinates(shape)
-        @inbounds for polygon in multipolygon
-            @inbounds for line in polygon
-                x = Vector{Float64}(undef, length(line))
-                y = Vector{Float64}(undef, length(line))
-                @inbounds for (point_id, point) in enumerate(line)
-                    @inbounds x[point_id] = point[1]
-                    @inbounds y[point_id] = point[2]
-                end
+        @inbounds for polygon in partition_shapes[partition_id]
+            @inbounds for (x, y) in polygon
                 PyPlot.fill(x, y, color=color)
                 PyPlot.plot(x, y, "k-", linewidth=1)
             end

@@ -7,7 +7,6 @@ import Random
 import ..DataFiles
 import ..DataGraphs
 import ..Graph
-import ..Plot
 
 function contiguous_partition!(
     county_to_partition::Dict{UInt, UInt},
@@ -137,7 +136,6 @@ mutable struct Partitioner
     county_populations::Dict{UInt, UInt}
     partition_populations::Dict{UInt, UInt}
     swap_candidates::Dict{UInt, Dict{UInt, Float64}}
-    plotter::Plot.Plotter
 end
 
 function Partitioner(
@@ -180,9 +178,6 @@ function Partitioner(
     swaps_candidates = Dict{UInt, Dict{UInt, Float64}}(
         id => Dict{UInt, Float64}() for id in county_ids)
 
-    # Plotter
-    plotter = Plot.Plotter(county_to_partition)
-
     # Construct partitioner object
     partitioner = Partitioner(
         adjacency_graph,
@@ -192,7 +187,6 @@ function Partitioner(
         county_populations,
         partition_populations,
         swaps_candidates,
-        plotter,
     )
 
     # Find swap candidates
@@ -323,7 +317,6 @@ function swap_county!(
     partitioner::Partitioner,
     county_id::UInt,
     partition_id::UInt;
-    update_plotter::Bool=false,
     )
 
     # Source and destination partitions
@@ -355,20 +348,9 @@ function swap_county!(
         update_county_swap_candidates!(partitioner, county_id)
     end
 
-    # Update plotter
-    if update_plotter
-        plotter = partitioner.plotter
-        plotter.county_to_partition = partitioner.county_to_partition
-        plotter.partition_to_counties = partitioner.partition_to_counties
-        Plot.reset_shapes!(plotter, reset_partitions=true)
-    end
-
 end
 
-function step!(
-    partitioner::Partitioner;
-    update_plotter::Bool=false,
-    )
+function step!(partitioner::Partitioner)
 
     # Flatten candidate swaps and scores
     swaps = Vector{Tuple{UInt, UInt}}()
@@ -399,12 +381,7 @@ function step!(
         i = Base.Sort.searchsortedfirst(scores, rand * prob_denom)
         (county_id, partition_id) = swaps[i]
         if can_swap_county(partitioner, county_id, partition_id)
-            swap_county!(
-                partitioner,
-                county_id,
-                partition_id,
-                update_plotter=update_plotter,
-            )
+            swap_county!(partitioner, county_id, partition_id)
             break
         end
     end
