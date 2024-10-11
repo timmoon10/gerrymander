@@ -20,7 +20,7 @@ using ..Constants: MultiPolygonCoords
         (204, 121, 167),
         (230, 159, 0),
     ]
-    return [(r/256, g/256, b/256) for (r, g, b) in colors]
+    return [(r/255, g/255, b/255) for (r, g, b) in colors]
 end
 
 function pick_color(i::UInt)::Tuple{Float64, Float64, Float64}

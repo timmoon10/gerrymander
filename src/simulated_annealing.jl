@@ -253,25 +253,34 @@ end
 function can_swap_county(
     partitioner::Partitioner,
     county_id::UInt,
+    partition_id::UInt,
     )::Bool
+    src_partition_id = partitioner.county_to_partition[county_id]
+    dst_partition_id = partition_id
 
-    # Get neighboring counties in same partition
-    partition_id = partitioner.county_to_partition[county_id]
-    neighbors = Set{UInt}()
-    for neighbor_id in keys(partitioner.adjacency_graph[county_id])
-        if partitioner.county_to_partition[neighbor_id] == partition_id
-            push!(neighbors, neighbor_id)
+    # Get neighboring counties
+    neighbors = keys(partitioner.adjacency_graph[county_id])
+    src_neighbors = Set{UInt}()
+    dst_neighbors = Set{UInt}()
+    sizehint!(src_neighbors, length(neighbors))
+    sizehint!(dst_neighbors, length(neighbors))
+    for neighbor_id in neighbors
+        neighbor_partition_id = partitioner.county_to_partition[neighbor_id]
+        if neighbor_partition_id == src_partition_id
+            push!(src_neighbors, neighbor_id)
+        elseif neighbor_partition_id == dst_partition_id
+            push!(dst_neighbors, neighbor_id)
         end
     end
 
     # Cannot swap isolated counties
-    if isempty(neighbors)
+    if isempty(src_neighbors) || isempty(dst_neighbors)
         return false
     end
 
-    # BFS over neighboring counties
-    start_id = pop!(neighbors)
-    not_visited = neighbors
+    # Local BFS to check if county is local cut vertex
+    not_visited = src_neighbors
+    start_id = pop!(not_visited)
     search_queue = DataStructures.Queue{UInt}()
     DataStructures.enqueue!(search_queue, start_id)
     while !isempty(search_queue)
@@ -283,10 +292,30 @@ function can_swap_county(
             end
         end
     end
+    if !isempty(not_visited)
+        return false
+    end
 
-    # Cannot swap if all neighboring counties are not reachable by
-    # local BFS
-    return isempty(not_visited)
+    # Local BFS to check if county would become local cut vertex
+    not_visited = dst_neighbors
+    start_id = pop!(not_visited)
+    search_queue = DataStructures.Queue{UInt}()
+    DataStructures.enqueue!(search_queue, start_id)
+    while !isempty(search_queue)
+        current = DataStructures.dequeue!(search_queue)
+        for neighbor in keys(partitioner.adjacency_graph[current])
+            if in(neighbor, not_visited)
+                delete!(not_visited, neighbor)
+                DataStructures.enqueue!(search_queue, neighbor)
+            end
+        end
+    end
+    if !isempty(not_visited)
+        return false
+    end
+
+    # County swap is valid
+    return true
 
 end
 
@@ -344,6 +373,8 @@ function step!(
     # Flatten candidate swaps and scores
     swaps = Vector{Tuple{UInt, UInt}}()
     scores = Vector{Float64}()
+    sizehint!(swaps, length(partitioner.swap_candidates))
+    sizehint!(scores, length(partitioner.swap_candidates))
     for (county_id, county_swaps) in partitioner.swap_candidates
         for (partition_id, affinity) in county_swaps
             push!(swaps, (county_id, partition_id))
@@ -367,7 +398,7 @@ function step!(
         rand = Random.rand(Float64)
         i = Base.Sort.searchsortedfirst(scores, rand * prob_denom)
         (county_id, partition_id) = swaps[i]
-        if can_swap_county(partitioner, county_id)
+        if can_swap_county(partitioner, county_id, partition_id)
             swap_county!(
                 partitioner,
                 county_id,
