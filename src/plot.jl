@@ -347,7 +347,10 @@ function plot(plotter::Plotter)
 
 end
 
-function animate!(plotter::Plotter)
+function animate!(
+    plotter::Plotter;
+    frame_interval::UInt = UInt(1000),
+    )
 
     # Initialize plot
     fig = PyPlot.figure()
@@ -387,17 +390,56 @@ function animate!(plotter::Plotter)
 
     end
 
-    # Mutex for frame update
+    # State for frame updates
     lock = ReentrantLock()
+    steps_per_frame::Int = 1
+    step_time::Float64 = frame_interval
+    plot_time::Float64 = frame_interval
+    running_mean_decay = 0.5
 
     function update_frame(frame::Int)
-        if trylock(lock)
-            Base.GC.enable(false)  # Working around strange segfaults
-            SimulatedAnnealing.step!(plotter.partitioner)
-            plot_frame()
-            Base.GC.enable(true)
-            unlock(lock)
+
+        # Skip frame if earlier frame is late
+        if !trylock(lock)
+            return
         end
+
+        # Work around strange segfaults from PyCall
+        Base.GC.enable(false)
+
+        # Perform partitioner steps
+        step_start_time = time()
+        for i in 1:steps_per_frame
+            SimulatedAnnealing.step!(plotter.partitioner)
+        end
+        step_end_time = time()
+
+        # Plot partitioner state
+        plot_frame()
+        plot_end_time = time()
+
+        # Update running averages for run times
+        step_time *= (1 - running_mean_decay)
+        step_time += (
+            running_mean_decay * 1e3 * (step_end_time - step_start_time)
+            / steps_per_frame
+        )
+        plot_time *= (1 - running_mean_decay)
+        plot_time += (
+            running_mean_decay * 1e3 * (plot_end_time - step_end_time)
+        )
+
+        # Update number of steps per frame
+        steps_per_frame = floor(
+            Int,
+            (frame_interval * 0.8 - plot_time) / step_time,
+        )
+        steps_per_frame = max(steps_per_frame, 1)
+
+        # Clean up
+        Base.GC.enable(true)
+        unlock(lock)
+
     end
 
     # Start animation
@@ -405,7 +447,7 @@ function animate!(plotter::Plotter)
         fig,
         update_frame,
         init_func=plot_frame,
-        interval=50,
+        interval=frame_interval,
         cache_frame_data=false,
     )
     PyPlot.show()
