@@ -1,15 +1,20 @@
 module Plot
 
+import Base.GC
 import Base.Threads
 import DataStructures
 import GeoInterface
 import LibGEOS
 import Memoize
+import PyCall
+
+using PyCall
+@pyimport matplotlib.animation as animation
 import PyPlot
 
 import ..DataFiles
 using ..Constants: MultiPolygonCoords
-import .Gerrymander
+import ..SimulatedAnnealing  ### TODO Remove
 
 @Memoize.memoize function color_list()::Vector{Tuple{Float64, Float64, Float64}}
     colors = [
@@ -338,6 +343,71 @@ function plot(plotter::Plotter)
     PyPlot.axis("off")
     PyPlot.axis("tight")
     PyPlot.axis("equal")
+    PyPlot.show()
+
+end
+
+function animate!(plotter::Plotter)
+
+    # Initialize plot
+    fig = PyPlot.figure()
+    ax = PyPlot.axes(xlim=(-0.05, 0.05), ylim=(-0.05, 0.05))
+    PyPlot.axis("off")
+    PyPlot.axis("tight")
+    PyPlot.axis("equal")
+
+    function plot_frame()
+
+        # Compute partition shapes
+        partition_shapes = make_partition_shapes(plotter)
+
+        # Reset plot
+        ax.clear()
+
+        # Plot partitions
+        for partition_id in plotter.partition_ids
+            color = pick_color(partition_id)
+            @inbounds for polygon in partition_shapes[partition_id]
+                @inbounds for (x, y) in polygon
+                    ax.fill(x, y, color=color)
+                    ax.plot(x, y, "k-", linewidth=1)
+                end
+            end
+        end
+
+        # Plot county boundaries
+        @inbounds for (x, y) in plotter.boundary_lines
+            ax.plot(x, y, "k-", linewidth=0.25)
+        end
+
+        # Plot options
+        PyPlot.axis("off")
+        PyPlot.axis("tight")
+        PyPlot.axis("equal")
+
+    end
+
+    # Mutex for frame update
+    lock = ReentrantLock()
+
+    function update_frame(frame::Int)
+        if trylock(lock)
+            Base.GC.enable(false)  # Working around strange segfaults
+            SimulatedAnnealing.step!(plotter.partitioner)
+            plot_frame()
+            Base.GC.enable(true)
+            unlock(lock)
+        end
+    end
+
+    # Start animation
+    anim = animation.FuncAnimation(
+        fig,
+        update_frame,
+        init_func=plot_frame,
+        interval=50,
+        cache_frame_data=false,
+    )
     PyPlot.show()
 
 end

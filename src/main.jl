@@ -22,15 +22,8 @@ function main()
     # Plotter
     plotter = Gerrymander.Plot.Plotter(partitioner)
 
-    # Perform simulated annealing
-    num_steps = 100
-    for step in 1:num_steps
-        update_plotter = step == num_steps
-        Gerrymander.SimulatedAnnealing.step!(partitioner)
-    end
-
-    # Plot
-    Gerrymander.Plot.plot(plotter)
+    # Animate
+    Gerrymander.Plot.animate!(plotter)
 
 end
 
