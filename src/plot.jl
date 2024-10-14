@@ -13,7 +13,7 @@ using PyCall
 import PyPlot
 
 import ..DataFiles
-using ..Constants: MultiPolygonCoords
+using ..Constants: MultiPolygonCoords, PolygonCoords
 import ..SimulatedAnnealing  ### TODO Remove
 
 @Memoize.memoize function color_list()::Vector{Tuple{Float64, Float64, Float64}}
@@ -34,6 +34,26 @@ function pick_color(i::UInt)::Tuple{Float64, Float64, Float64}
     return colors[i % length(colors) + 1]
 end
 
+function multipolygon_bounds(
+    multipolygon::MultiPolygonCoords,
+    )::Tuple{Float64, Float64, Float64, Float64}
+    min_x::Float64 = Inf
+    max_x::Float64 = -Inf
+    min_y::Float64 = Inf
+    max_y::Float64 = -Inf
+    @inbounds for polygon in multipolygon
+        @inbounds for point in polygon[1]
+            @inbounds x = point[1]
+            @inbounds y = point[2]
+            min_x = min(x, min_x)
+            max_x = max(x, max_x)
+            min_y = min(y, min_y)
+            max_y = max(y, max_y)
+        end
+    end
+    return (min_x, max_x, min_y, max_y)
+end
+
 "Parameters for Lambert conformal conic projection"
 struct LambertProjection
     ref_long::Float64
@@ -48,21 +68,21 @@ function LambertProjection(
     )::LambertProjection
 
     # Determine region boundaries
-    min_long::Float64 = 0.0
-    max_long::Float64 = -180.0
-    min_lat::Float64 = 90.0
-    max_lat::Float64 = -90.0
-    @inbounds for multipolygon in values(county_boundaries)
-        @inbounds for polygon in multipolygon
-            @inbounds for coord in polygon[1]
-                @inbounds long::Float64 = coord[1]
-                @inbounds lat::Float64 = coord[2]
-                min_long = min(long, min_long)
-                max_long = max(long, max_long)
-                min_lat = min(lat, min_lat)
-                max_lat = max(lat, max_lat)
-            end
-        end
+    county_ids = collect(keys(county_boundaries))
+    coord_bounds = Vector{Tuple{Float64, Float64, Float64, Float64}}(
+        undef,
+        length(county_ids),
+    )
+    @Base.Threads.threads for i in 1:length(county_ids)
+        county_id = county_ids[i]
+        coord_bounds[i] = multipolygon_bounds(county_boundaries[county_id])
+    end
+    (min_long, max_long, min_lat, max_lat) = coord_bounds[1]
+    @inbounds for bounds in coord_bounds[2:end]
+        @inbounds min_long = min(min_long, bounds[1])
+        @inbounds max_long = max(max_long, bounds[2])
+        @inbounds min_lat = min(min_lat, bounds[3])
+        @inbounds max_lat = max(max_lat, bounds[4])
     end
     min_long *= pi / 180
     max_long *= pi / 180
@@ -98,6 +118,161 @@ function (lambert_projection::LambertProjection)(
     x = rho * sin(n * (long - ref_long))
     y = rho_ref - rho * cos(n * (long - ref_long))
     return (x, y)
+end
+
+function downsample_multipolygon(
+    multipolygon::MultiPolygonCoords,
+    grid_size::Float64,
+    )::MultiPolygonCoords
+
+    "Convert real-valued coordinate to integer grid index"
+    function to_grid(x::Float64, grid_size::Float64)::Int
+        return div(x, grid_size)
+    end
+
+    "Convert integer grid index to real-valued coordinate"
+    function from_grid(i::Int, grid_size::Float64)::Float64
+        return i * grid_size
+    end
+
+    # Multipolygon bounds
+    (min_x, max_x, min_y, max_y) = multipolygon_bounds(multipolygon)
+
+    # Grid for downsampling multipolygon
+    sample_size = grid_size * 2
+    min_i = 2 * (to_grid(min_x, sample_size) - 1)
+    max_i = 2 * (to_grid(max_x, sample_size) + 2)
+    min_j = 2 * (to_grid(min_y, sample_size) - 1)
+    max_j = 2 * (to_grid(max_y, sample_size) + 2)
+
+    # Check if grid points are in multipolygon
+    # Note: Sample at half resolution
+    multipolygon = LibGEOS.MultiPolygon(multipolygon)
+    in_polygon = Dict{Tuple{Int, Int}, Bool}()
+    sizehint!(in_polygon, (max_i - min_i + 1) * (max_j - min_j + 1))
+    for i in min_i:2:max_i
+        x = from_grid(i, grid_size)
+        for j in min_j:2:max_j
+            y = from_grid(j, grid_size)
+            point = LibGEOS.Point(x, y)
+            in_polygon[(i,j)] = LibGEOS.contains(multipolygon, point)
+        end
+    end
+
+    "Full grid square"
+    function make_full_grid(i::Int, j::Int, grid_size::Float64)::PolygonCoords
+        x1 = from_grid(i, grid_size)
+        x2 = from_grid(i+1, grid_size)
+        y1 = from_grid(j, grid_size)
+        y2 = from_grid(j+1, grid_size)
+        return [[[x1, y1], [x1, y2], [x2, y2], [x2, y1], [x1, y1]]]
+    end
+
+    "Triangular half grid square"
+    function make_half_grid(
+        orientation::Int,
+        i::Int,
+        j::Int,
+        grid_size::Float64,
+        )::PolygonCoords
+        x1 = from_grid(i, grid_size)
+        x2 = from_grid(i+1, grid_size)
+        y1 = from_grid(j, grid_size)
+        y2 = from_grid(j+1, grid_size)
+        if orientation == 1
+            return [[[x1, y1], [x1, y2], [x2, y1], [x1, y1]]]
+        elseif orientation == 2
+            return [[[x1, y2], [x2, y2], [x1, y1], [x1, y2]]]
+        elseif orientation == 3
+            return [[[x2, y2], [x2, y1], [x1, y2], [x2, y2]]]
+        elseif orientation == 4
+            return [[[x2, y1], [x1, y1], [x2, y2], [x2, y1]]]
+        else
+            return []
+        end
+    end
+
+    # Approximate multipolygon with grid squares and triangles
+    multipolygon = MultiPolygonCoords()
+    for i in min_i:2:max_i-1
+        for j in min_j:2:max_j-1
+
+            # Check if corners are in multipolygon
+            corner_in_polygon = (
+                in_polygon[(i,j)],
+                in_polygon[(i,j+2)],
+                in_polygon[(i+2,j+2)],
+                in_polygon[(i+2,j)],
+            )
+
+            # Trivial case: no corners are in multipolygon
+            if corner_in_polygon == (false, false, false, false)
+                continue
+            end
+
+            # Process grid squares in groups of 4
+            corner_is = (i, i, i+1, i+1)
+            corner_js = (j, j+1, j+1, j)
+            corner_in_polygon = (
+                corner_in_polygon[1],
+                corner_in_polygon[2],
+                corner_in_polygon[3],
+                corner_in_polygon[4],
+                corner_in_polygon[1],
+                corner_in_polygon[2],
+                corner_in_polygon[3],
+            )
+            for corner in 1:4
+                corner1_in = corner_in_polygon[corner]
+                corner2_in = corner_in_polygon[corner+1]
+                corner3_in = corner_in_polygon[corner+2]
+                corner4_in = corner_in_polygon[corner+3]
+                if corner1_in
+                    if (!corner2_in && !corner3_in && !corner4_in)
+                        push!(
+                            multipolygon,
+                            make_half_grid(
+                                corner,
+                                corner_is[corner],
+                                corner_js[corner],
+                                grid_size,
+                            ),
+                        )
+                    else
+                        push!(
+                            multipolygon,
+                            make_full_grid(
+                                corner_is[corner],
+                                corner_js[corner],
+                                grid_size,
+                            ),
+                        )
+                    end
+                elseif corner2_in && corner3_in && corner4_in
+                    orientation = corner <= 2 ? corner + 2 : corner - 2
+                    push!(
+                        multipolygon,
+                        make_half_grid(
+                            orientation,
+                            corner_is[corner],
+                            corner_js[corner],
+                            grid_size,
+                        ),
+                    )
+                end
+            end
+
+        end
+    end
+
+    # Compute union of downsampled multipolygon
+    multipolygon = LibGEOS.MultiPolygon(multipolygon)
+    multipolygon = LibGEOS.unaryUnion(multipolygon)
+    multipolygon = LibGEOS.MultiPolygon(multipolygon)
+    multipolygon = GeoInterface.coordinates(multipolygon)
+
+    return multipolygon
+
 end
 
 function county_boundaries_to_lines(
@@ -248,6 +423,32 @@ function Plotter(
         multipolygon_to_lambert!(
             county_boundaries[county_id],
             lambert_projection,
+        )
+    end
+
+    # Compute grid size for downsampling
+    coord_bounds = Vector{Tuple{Float64, Float64, Float64, Float64}}(
+        undef,
+        length(county_ids),
+    )
+    @Base.Threads.threads for i in 1:length(county_ids)
+        county_id = county_ids[i]
+        coord_bounds[i] = multipolygon_bounds(county_boundaries[county_id])
+    end
+    (min_x, max_x, min_y, max_y) = coord_bounds[1]
+    @inbounds for bounds in coord_bounds[2:end]
+        @inbounds min_x = min(min_x, bounds[1])
+        @inbounds max_x = max(max_x, bounds[2])
+        @inbounds min_y = min(min_y, bounds[3])
+        @inbounds max_y = max(max_y, bounds[4])
+    end
+    grid_size = min(max_x - min_x, max_y - min_y) / 1024
+
+    # Downsample boundaries
+    @Base.Threads.threads for county_id in county_ids
+        county_boundaries[county_id] = downsample_multipolygon(
+            county_boundaries[county_id],
+            grid_size,
         )
     end
 
