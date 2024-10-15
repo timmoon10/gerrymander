@@ -17,6 +17,7 @@ function contiguous_partition!(
 
     # Iterate through partitions
     for partition_id in keys(partition_to_counties)
+        partition_counties = partition_to_counties[partition_id]
 
         # BFS from partition center
         center_id = partition_center_county[partition_id]
@@ -26,7 +27,7 @@ function contiguous_partition!(
         while !isempty(search_queue)
             current = DataStructures.dequeue!(search_queue)
             for neighbor in keys(graph[current])
-                if !in(neighbor, found_set)
+                if in(neighbor, partition_counties) && !in(neighbor, found_set)
                     push!(found_set, neighbor)
                     DataStructures.enqueue!(search_queue, neighbor)
                 end
@@ -34,7 +35,6 @@ function contiguous_partition!(
         end
 
         # Identify disconnected counties
-        partition_counties = partition_to_counties[partition_id]
         disconnected = setdiff(partition_counties, found_set)
         setdiff!(partition_counties, disconnected)
 
@@ -43,7 +43,7 @@ function contiguous_partition!(
             for county_id in collect(disconnected)
                 for neighbor in keys(graph[county_id])
                     neighbor_partition_id = county_to_partition[neighbor]
-                    if neighbor == partition_id
+                    if neighbor_partition_id == partition_id
                         continue
                     end
                     county_to_partition[county_id] = neighbor_partition_id
