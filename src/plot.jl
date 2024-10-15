@@ -120,65 +120,87 @@ function (lambert_projection::LambertProjection)(
     return (x, y)
 end
 
-function downsample_multipolygon(
-    multipolygon::MultiPolygonCoords,
+function downsample_county_boundaries!(
+    county_boundaries::Dict{UInt, MultiPolygonCoords},
     grid_size::Float64,
-    )::MultiPolygonCoords
+    )
 
-    "Convert real-valued coordinate to integer grid index"
-    function to_grid(x::Float64, grid_size::Float64)::Int
-        return div(x, grid_size)
+    # Helper functions to convert to/from grid
+    to_grid = let grid_size::Float64 = grid_size
+        function to_grid(x::Float64)::Int
+            return div(x, grid_size)
+        end
+        to_grid
+    end
+    from_grid = let grid_size::Float64 = grid_size
+        function from_grid(i::Int)::Float64
+            return i * grid_size
+        end
+        from_grid
     end
 
-    "Convert integer grid index to real-valued coordinate"
-    function from_grid(i::Int, grid_size::Float64)::Float64
-        return i * grid_size
+    # Find grid points in each county
+    county_ids = collect(keys(county_boundaries))
+    county_grid_bounds = Dict{UInt, Tuple{Int, Int, Int, Int}}(
+        county_id => (0, 0, 0, 0) for county_id in county_ids)
+    county_grid_points = Dict{UInt, Set{Tuple{Int, Int}}}(
+        county_id => Set{Tuple{Int, Int}}() for county_id in county_ids)
+    @Base.Threads.threads for county_id in county_ids
+
+        # Grid bounds
+        multipolygon = county_boundaries[county_id]
+        (min_x, max_x, min_y, max_y) = multipolygon_bounds(multipolygon)
+        min_i = 2 * div(to_grid(min_x), 2) - 2
+        max_i = 2 * div(to_grid(max_x), 2) + 4
+        min_j = 2 * div(to_grid(min_y), 2) - 2
+        max_j = 2 * div(to_grid(max_y), 2) + 4
+        county_grid_bounds[county_id]  = (min_i, max_i, min_j, max_j)
+
+        # Find grid points in multipolygon
+        # Note: Sample at half resolution
+        multipolygon = LibGEOS.MultiPolygon(multipolygon)
+        grid_points = county_grid_points[county_id]
+        sizehint!(grid_points, (max_i-min_i+1) * (max_j-min_j+1))
+        for i in min_i:2:max_i
+            x = from_grid(i)
+            for j in min_j:2:max_j
+                y = from_grid(j)
+                point = LibGEOS.Point(x, y)
+                if LibGEOS.contains(multipolygon, point)
+                    push!(grid_points, (i, j))
+                end
+            end
+        end
+
     end
 
-    # Multipolygon bounds
-    (min_x, max_x, min_y, max_y) = multipolygon_bounds(multipolygon)
-
-    # Grid for downsampling multipolygon
-    sample_size = grid_size * 2
-    min_i = 2 * (to_grid(min_x, sample_size) - 1)
-    max_i = 2 * (to_grid(max_x, sample_size) + 2)
-    min_j = 2 * (to_grid(min_y, sample_size) - 1)
-    max_j = 2 * (to_grid(max_y, sample_size) + 2)
-
-    # Check if grid points are in multipolygon
-    # Note: Sample at half resolution
-    multipolygon = LibGEOS.MultiPolygon(multipolygon)
-    in_polygon = Dict{Tuple{Int, Int}, Bool}()
-    sizehint!(in_polygon, (max_i - min_i + 1) * (max_j - min_j + 1))
-    for i in min_i:2:max_i
-        x = from_grid(i, grid_size)
-        for j in min_j:2:max_j
-            y = from_grid(j, grid_size)
-            point = LibGEOS.Point(x, y)
-            in_polygon[(i,j)] = LibGEOS.contains(multipolygon, point)
+    # Find county for each grid point
+    grid_point_counties = Dict{Tuple{Int, Int}, Int}()
+    num_points = sum(
+        length(grid_points)
+        for grid_points in values(county_grid_points))
+    sizehint!(grid_point_counties, num_points)
+    for (county_id, grid_points) in county_grid_points
+        for grid_point in grid_points
+            grid_point_counties[grid_point] = county_id
         end
     end
 
-    "Full grid square"
-    function make_full_grid(i::Int, j::Int, grid_size::Float64)::PolygonCoords
-        x1 = from_grid(i, grid_size)
-        x2 = from_grid(i+1, grid_size)
-        y1 = from_grid(j, grid_size)
-        y2 = from_grid(j+1, grid_size)
+    # Helper function to make full grid square
+    function make_full_grid(i::Int, j::Int)::PolygonCoords
+        x1 = from_grid(i)
+        x2 = from_grid(i+1)
+        y1 = from_grid(j)
+        y2 = from_grid(j+1)
         return [[[x1, y1], [x1, y2], [x2, y2], [x2, y1], [x1, y1]]]
     end
 
-    "Triangular half grid square"
-    function make_half_grid(
-        orientation::Int,
-        i::Int,
-        j::Int,
-        grid_size::Float64,
-        )::PolygonCoords
-        x1 = from_grid(i, grid_size)
-        x2 = from_grid(i+1, grid_size)
-        y1 = from_grid(j, grid_size)
-        y2 = from_grid(j+1, grid_size)
+    # Helper function to make half grid triangle
+    function make_half_grid(orientation::Int, i::Int, j::Int)::PolygonCoords
+        x1 = from_grid(i)
+        x2 = from_grid(i+1)
+        y1 = from_grid(j)
+        y2 = from_grid(j+1)
         if orientation == 1
             return [[[x1, y1], [x1, y2], [x2, y1], [x1, y1]]]
         elseif orientation == 2
@@ -192,86 +214,87 @@ function downsample_multipolygon(
         end
     end
 
-    # Approximate multipolygon with grid squares and triangles
-    multipolygon = MultiPolygonCoords()
-    for i in min_i:2:max_i-1
-        for j in min_j:2:max_j-1
+    # Downsample each county boundary
+    @Base.Threads.threads for county_id in county_ids
 
-            # Check if corners are in multipolygon
-            corner_in_polygon = (
-                in_polygon[(i,j)],
-                in_polygon[(i,j+2)],
-                in_polygon[(i+2,j+2)],
-                in_polygon[(i+2,j)],
-            )
+        # Iterate over half-resolution grid
+        multipolygon = MultiPolygonCoords()
+        (min_i, max_i, min_j, max_j) = county_grid_bounds[county_id]
+        for i in min_i:2:max_i-1
+            for j in min_j:2:max_j-1
 
-            # Trivial case: no corners are in multipolygon
-            if corner_in_polygon == (false, false, false, false)
-                continue
-            end
+                # Check if corners are in multipolygon
+                corner_counties = (
+                    get(grid_point_counties, (i,j), -1),
+                    get(grid_point_counties, (i,j+2), -1),
+                    get(grid_point_counties, (i+2,j+2), -1),
+                    get(grid_point_counties, (i+2,j), -1),
+                )
+                corner_counties = (
+                    corner_counties[1],
+                    corner_counties[2],
+                    corner_counties[3],
+                    corner_counties[4],
+                    corner_counties[1],
+                    corner_counties[2],
+                    corner_counties[3],
+                )
 
-            # Process grid squares in groups of 4
-            corner_is = (i, i, i+1, i+1)
-            corner_js = (j, j+1, j+1, j)
-            corner_in_polygon = (
-                corner_in_polygon[1],
-                corner_in_polygon[2],
-                corner_in_polygon[3],
-                corner_in_polygon[4],
-                corner_in_polygon[1],
-                corner_in_polygon[2],
-                corner_in_polygon[3],
-            )
-            for corner in 1:4
-                corner1_in = corner_in_polygon[corner]
-                corner2_in = corner_in_polygon[corner+1]
-                corner3_in = corner_in_polygon[corner+2]
-                corner4_in = corner_in_polygon[corner+3]
-                if corner1_in
-                    if (!corner2_in && !corner3_in && !corner4_in)
-                        push!(
-                            multipolygon,
-                            make_half_grid(
-                                corner,
-                                corner_is[corner],
-                                corner_js[corner],
-                                grid_size,
-                            ),
+                # Process grid squares in groups of 4
+                corner_is = (i, i, i+1, i+1)
+                corner_js = (j, j+1, j+1, j)
+                for corner in 1:4
+                    corner1_id = corner_counties[corner]
+                    corner2_id = corner_counties[corner+1]
+                    corner3_id = corner_counties[corner+2]
+                    corner4_id = corner_counties[corner+3]
+                    corner_i = corner_is[corner]
+                    corner_j = corner_js[corner]
+                    if corner1_id == county_id
+                        if (
+                            corner2_id != county_id
+                            && corner2_id == corner3_id
+                            && corner3_id == corner4_id
+                            && corner4_id == corner2_id
+                            )
+                            push!(
+                                multipolygon,
+                                make_half_grid(corner, corner_i, corner_j),
+                            )
+                        else
+                            push!(
+                                multipolygon,
+                                make_full_grid(corner_i, corner_j),
+                            )
+                        end
+                    elseif (
+                        corner2_id == county_id
+                        && corner3_id == county_id
+                        && corner4_id == county_id
                         )
-                    else
+                        orientation = corner <= 2 ? corner + 2 : corner - 2
                         push!(
                             multipolygon,
-                            make_full_grid(
-                                corner_is[corner],
-                                corner_js[corner],
-                                grid_size,
-                            ),
+                            make_half_grid(orientation, corner_i, corner_j),
                         )
                     end
-                elseif corner2_in && corner3_in && corner4_in
-                    orientation = corner <= 2 ? corner + 2 : corner - 2
-                    push!(
-                        multipolygon,
-                        make_half_grid(
-                            orientation,
-                            corner_is[corner],
-                            corner_js[corner],
-                            grid_size,
-                        ),
-                    )
                 end
+
             end
-
         end
+
+        # Compute union of downsampled multipolygon
+        if !isempty(multipolygon)
+            multipolygon = LibGEOS.MultiPolygon(multipolygon)
+            multipolygon = LibGEOS.unaryUnion(multipolygon)
+            multipolygon = LibGEOS.MultiPolygon(multipolygon)
+            multipolygon = GeoInterface.coordinates(multipolygon)
+        end
+
+        # Update county boundaries with downsampled multipolygon
+        county_boundaries[county_id] = multipolygon
+
     end
-
-    # Compute union of downsampled multipolygon
-    multipolygon = LibGEOS.MultiPolygon(multipolygon)
-    multipolygon = LibGEOS.unaryUnion(multipolygon)
-    multipolygon = LibGEOS.MultiPolygon(multipolygon)
-    multipolygon = GeoInterface.coordinates(multipolygon)
-
-    return multipolygon
 
 end
 
@@ -445,12 +468,7 @@ function Plotter(
     grid_size = min(max_x - min_x, max_y - min_y) / 1024
 
     # Downsample boundaries
-    @Base.Threads.threads for county_id in county_ids
-        county_boundaries[county_id] = downsample_multipolygon(
-            county_boundaries[county_id],
-            grid_size,
-        )
-    end
+    downsample_county_boundaries!(county_boundaries, grid_size)
 
     # Convert boundaries into lines
     boundary_lines = county_boundaries_to_lines(county_boundaries)
