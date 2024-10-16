@@ -239,17 +239,19 @@ function load_county_boundaries()::Dict{UInt, MultiPolygonCoords}
         county_boundaries = Vector{MultiPolygonCoords}(undef, length(county_ids))
         @Base.Threads.threads for i in 1:length(county_ids)
             cache_multipolygon = cache_county_boundaries[county_ids[i]]
-            multipolygon = MultiPolygonCoords(undef, length(cache_multipolygon))
+            multipolygon = MultiPolygonCoords()
+            sizehint!(multipolygon, length(cache_multipolygon))
             county_boundaries[i] = multipolygon
             @inbounds for (polygon_id, cache_polygon) in enumerate(cache_multipolygon)
-                polygon = PolygonCoords(undef, length(cache_polygon))
-                @inbounds multipolygon[polygon_id] = polygon
+                polygon = PolygonCoords()
+                sizehint!(polygon, length(cache_polygon))
+                push!(multipolygon, polygon)
                 @inbounds for (line_id, cache_line) in enumerate(cache_polygon)
-                    line = Vector{Vector{Float64}}(undef, size(cache_line, 2))
-                    @inbounds polygon[line_id] = line
-                    for point_id in 1:size(cache_line, 2)
-                        @inbounds line[point_id] = [
-                            cache_line[1, point_id], cache_line[2, point_id]]
+                    line = Vector{Vector{Float64}}()
+                    sizehint!(line, size(cache_line, 2))
+                    push!(polygon, line)
+                    @inbounds for point_id in 1:size(cache_line, 2)
+                        @inbounds push!(line, cache_line[:, point_id])
                     end
                 end
             end
