@@ -110,6 +110,7 @@ mutable struct Plotter
     partition_ids::Vector{UInt}
     county_boundaries::Dict{UInt, MultiPolygonCoords}
     boundary_lines::Vector{PlotLine}
+    is_paused::Bool
 end
 
 function Plotter(
@@ -195,6 +196,7 @@ function Plotter(
         partition_ids,
         county_boundaries,
         boundary_lines,
+        false,
     )
     return out
 
@@ -323,16 +325,22 @@ function animate!(
     end
 
     # State for frame updates
-    lock = ReentrantLock()
+    anim_lock = ReentrantLock()
     steps_per_frame::Int = 1
     step_time::Float64 = frame_interval
     plot_time::Float64 = frame_interval
     running_mean_decay = 0.5
 
+    "Update animation frame"
     function update_frame(frame::Int)
 
-        # Skip frame if earlier frame is late
-        if !trylock(lock)
+        # Skip frame if paused
+        if plotter.is_paused
+            return
+        end
+
+        # Skip frame if mutex is locked
+        if !trylock(anim_lock)
             return
         end
 
@@ -370,7 +378,7 @@ function animate!(
 
         # Clean up
         Base.GC.enable(true)
-        unlock(lock)
+        unlock(anim_lock)
 
     end
 
@@ -382,6 +390,39 @@ function animate!(
         interval=frame_interval,
         cache_frame_data=false,
     )
+
+    "Logic for key presses"
+    function on_key(event)
+
+        # Lock mutex to avoid interfering with animation
+        lock(anim_lock)
+
+        # Work around strange segfaults from PyCall
+        Base.GC.enable(false)
+
+        # Basic key press logic
+        if event.key == "escape"
+            exit()
+        end
+        if event.key == "p"
+            plotter.is_paused = !plotter.is_paused
+        end
+
+        # Partitioner key press logic
+        if hasfield(typeof(plotter.partitioner), :on_key_func)
+            plotter.partitioner.on_key_func(event)
+        end
+
+        # Clean up
+        Base.GC.enable(true)
+        unlock(anim_lock)
+
+    end
+
+    # Register logic for key presses
+    fig.canvas.mpl_connect("key_press_event", on_key)
+
+    # Start animation
     PyPlot.show()
 
 end

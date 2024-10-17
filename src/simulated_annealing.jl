@@ -129,6 +129,8 @@ function voronoi_partition(
 end
 
 mutable struct Partitioner
+    temperature::Float64
+    population_weight::Float64
     adjacency_graph::Graph.WeightedGraph
     interaction_graph::Graph.WeightedGraph
     county_to_partition::Dict{UInt, UInt}
@@ -136,8 +138,7 @@ mutable struct Partitioner
     county_populations::Dict{UInt, UInt}
     partition_populations::Dict{UInt, UInt}
     swap_candidates::Dict{UInt, Dict{UInt, Float64}}
-    temperature::Float64
-    population_weight::Float64
+    on_key_func::Union{Function, Nothing}
 end
 
 function Partitioner(
@@ -145,8 +146,8 @@ function Partitioner(
     state_ids::AbstractVector{UInt},
     interaction_personal_stdev::Float64,
     interaction_max_distance::Float64;
-    temperature::Float64 = 1e-1,
-    population_weight::Float64 = 10.0,
+    temperature::Float64 = 1.0,
+    population_weight::Float64 = 1.0,
     )::Partitioner
 
     # Data graphs
@@ -187,6 +188,8 @@ function Partitioner(
 
     # Construct partitioner object
     partitioner = Partitioner(
+        temperature,
+        population_weight,
         adjacency_graph,
         interaction_graph,
         county_to_partition,
@@ -194,9 +197,39 @@ function Partitioner(
         county_populations,
         partition_populations,
         swaps_candidates,
-        temperature,
-        population_weight,
+        nothing,
     )
+
+    "Logic for key presses"
+    function on_key(event)
+        if event.key == "h"
+            println("Commands")
+            println("--------")
+            println("h: help message")
+            println("esc: exit")
+            println("p: pause animation")
+            println("i: partitioner state")
+            println("-/=: adjust temperature")
+            println("[/]: adjust population weight")
+        elseif event.key == "i"
+            print_info(partitioner)
+        elseif event.key == "-"
+            partitioner.temperature /= 2
+            println("Temperature: ", partitioner.temperature)
+        elseif event.key == "="
+            partitioner.temperature *= 2
+            println("Temperature: ", partitioner.temperature)
+        elseif event.key == "["
+            partitioner.population_weight /= 2
+            println("Population weight: ", partitioner.population_weight)
+        elseif event.key == "]"
+            partitioner.population_weight *= 2
+            println("Population weight: ", partitioner.population_weight)
+        end
+    end
+
+    # Register logic for key presses
+    partitioner.on_key_func = on_key
 
     # Find swap candidates
     @Base.Threads.threads for county_id in county_ids
@@ -204,6 +237,46 @@ function Partitioner(
     end
 
     return partitioner
+
+end
+
+function print_info(partitioner::Partitioner)
+
+    # Print partitioner state
+    println("Partitioner properties")
+    println("----------------------")
+    println("Temperature: ", partitioner.temperature)
+    println("Population weight: ", partitioner.population_weight)
+    print("\n")
+
+    # Print partition populations
+    println("Partition populations")
+    println("---------------------")
+    partition_ids = collect(keys(partitioner.partition_populations))
+    sort!(partition_ids)
+    for partition_id in partition_ids
+        pop::Int = partitioner.partition_populations[partition_id]
+        println("Partition ", Int(partition_id), ": ", pop)
+    end
+    print("\n")
+
+    # Print partition populations
+    println("Partition affinites")
+    println("---------------------")
+    for partition_id in partition_ids
+        partition_affinity::Float64 = 0
+        partition_counties = partitioner.partition_to_counties[partition_id]
+        for county_id in partition_counties
+            for (neighbor_id, affinity) in partitioner.interaction_graph[county_id]
+                if neighbor_id != county_id && in(neighbor_id, partition_counties)
+                    partition_affinity += affinity
+                end
+
+            end
+        end
+        println("Partition ", Int(partition_id), ": ", partition_affinity)
+    end
+    print("\n")
 
 end
 
