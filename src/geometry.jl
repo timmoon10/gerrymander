@@ -82,9 +82,10 @@ function downsample_county_boundaries!(
 
     # Find county for each grid point
     grid_point_counties = Dict{Tuple{Int, Int}, Int}()
-    num_points = sum(
-        length(grid_points)
-        for grid_points in values(county_grid_points))
+    num_points::Int = 0
+    for grid_points in values(county_grid_points)
+        num_points += length(grid_points)
+    end
     sizehint!(grid_point_counties, num_points)
     for (county_id, grid_points) in county_grid_points
         for grid_point in grid_points
