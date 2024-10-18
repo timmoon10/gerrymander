@@ -8,58 +8,6 @@ import ..DataFiles
 import ..DataGraphs
 import ..Graph
 
-function contiguous_partition!(
-    county_to_partition::Dict{UInt, UInt},
-    partition_to_counties::Dict{UInt, Set{UInt}},
-    partition_center_county::Dict{UInt, UInt},
-    graph::Graph.WeightedGraph,
-    )
-
-    # Iterate through partitions
-    for partition_id in keys(partition_to_counties)
-        partition_counties = partition_to_counties[partition_id]
-
-        # BFS from partition center
-        center_id = partition_center_county[partition_id]
-        found_set = Set{UInt}([center_id])
-        search_queue = DataStructures.Queue{UInt}()
-        DataStructures.enqueue!(search_queue, center_id)
-        while !isempty(search_queue)
-            current = DataStructures.dequeue!(search_queue)
-            for neighbor in keys(graph[current])
-                if in(neighbor, partition_counties) && !in(neighbor, found_set)
-                    push!(found_set, neighbor)
-                    DataStructures.enqueue!(search_queue, neighbor)
-                end
-            end
-        end
-
-        # Identify disconnected counties
-        disconnected = setdiff(partition_counties, found_set)
-        setdiff!(partition_counties, disconnected)
-
-        # Reassign disconnected counties to neighboring partitions
-        while !isempty(disconnected)
-            for county_id in collect(disconnected)
-                for neighbor in keys(graph[county_id])
-                    neighbor_partition_id = county_to_partition[neighbor]
-                    if neighbor_partition_id == partition_id
-                        continue
-                    end
-                    county_to_partition[county_id] = neighbor_partition_id
-                    push!(
-                        partition_to_counties[neighbor_partition_id],
-                        county_id,
-                    )
-                    break
-                end
-            end
-        end
-
-    end
-
-end
-
 function voronoi_partition(
     num_partitions::UInt,
     graph::Graph.WeightedGraph,
@@ -117,7 +65,7 @@ function voronoi_partition(
     center_ids = Dict{UInt, UInt}(
         partition_id => county_id
         for (partition_id, county_id) in enumerate(center_ids))
-    contiguous_partition!(
+    Graph.make_partition_contiguous!(
         county_to_partition,
         partition_to_counties,
         center_ids,
@@ -139,108 +87,109 @@ mutable struct Partitioner
     partition_populations::Dict{UInt, UInt}
     swap_candidates::Dict{UInt, Dict{UInt, Float64}}
     on_key_func::Union{Function, Nothing}
+
+    function Partitioner(
+        num_partitions::UInt,
+        state_ids::AbstractVector{UInt},
+        interaction_personal_stdev::Float64,
+        interaction_max_distance::Float64;
+        temperature::Float64 = 1.0,
+        population_weight::Float64 = 1.0,
+        )::Partitioner
+
+        # Data graphs
+        adjacency_graph = DataGraphs.county_adjacency_graph(state_ids)
+        interaction_graph = DataGraphs.county_interaction_graph(
+            state_ids,
+            interaction_personal_stdev,
+            interaction_max_distance,
+        )
+
+        # County data
+        county_population_data = DataFiles.load_county_populations(state_ids)
+        num_counties = size(county_population_data, 1)
+        county_ids = Vector{UInt}(county_population_data[:, 1])
+        county_populations = Dict{UInt, UInt}(
+            county_ids[i] => county_population_data[i, 2]
+            for i in 1:num_counties)
+
+        # Initial partition
+        (county_to_partition, partition_to_counties) = voronoi_partition(
+            num_partitions,
+            adjacency_graph,
+            state_ids,
+        )
+        partition_populations = Dict{UInt, UInt}()
+        sizehint!(partition_populations, Int(num_partitions))
+        for (partition_id, counties) in partition_to_counties
+            pop::UInt = 0
+            for county_id in counties
+                pop += county_populations[county_id]
+            end
+            partition_populations[partition_id] = pop
+        end
+
+        # Candidate county swaps
+        swaps_candidates = Dict{UInt, Dict{UInt, Float64}}(
+            id => Dict{UInt, Float64}() for id in county_ids)
+
+        # Construct partitioner object
+        partitioner = new(
+            temperature,
+            population_weight,
+            adjacency_graph,
+            interaction_graph,
+            county_to_partition,
+            partition_to_counties,
+            county_populations,
+            partition_populations,
+            swaps_candidates,
+            nothing,
+        )
+
+        "Logic for key presses"
+        function on_key(event)::Nothing
+            if event.key == "h"
+                println("Commands")
+                println("--------")
+                println("h: help message")
+                println("esc: exit")
+                println("p: pause animation")
+                println("i: partitioner state")
+                println("-/=: adjust temperature")
+                println("[/]: adjust population weight")
+            elseif event.key == "i"
+                print_info(partitioner)
+            elseif event.key == "-"
+                partitioner.temperature /= 2
+                println("Temperature: ", partitioner.temperature)
+            elseif event.key == "="
+                partitioner.temperature *= 2
+                println("Temperature: ", partitioner.temperature)
+            elseif event.key == "["
+                partitioner.population_weight /= 2
+                println("Population weight: ", partitioner.population_weight)
+            elseif event.key == "]"
+                partitioner.population_weight *= 2
+                println("Population weight: ", partitioner.population_weight)
+            end
+        end
+
+        # Register logic for key presses
+        partitioner.on_key_func = on_key
+
+        # Find swap candidates
+        @Base.Threads.threads for county_id in county_ids
+            update_county_swap_candidates!(partitioner, county_id)
+        end
+
+        return partitioner
+
+    end
+
 end
 
-function Partitioner(
-    num_partitions::UInt,
-    state_ids::AbstractVector{UInt},
-    interaction_personal_stdev::Float64,
-    interaction_max_distance::Float64;
-    temperature::Float64 = 1.0,
-    population_weight::Float64 = 1.0,
-    )::Partitioner
-
-    # Data graphs
-    adjacency_graph = DataGraphs.county_adjacency_graph(state_ids)
-    interaction_graph = DataGraphs.county_interaction_graph(
-        state_ids,
-        interaction_personal_stdev,
-        interaction_max_distance,
-    )
-
-    # County data
-    county_population_data = DataFiles.load_county_populations(state_ids)
-    num_counties = size(county_population_data, 1)
-    county_ids = Vector{UInt}(county_population_data[:, 1])
-    county_populations = Dict{UInt, UInt}(
-        county_ids[i] => county_population_data[i, 2]
-        for i in 1:num_counties)
-
-    # Initial partition
-    (county_to_partition, partition_to_counties) = voronoi_partition(
-        num_partitions,
-        adjacency_graph,
-        state_ids,
-    )
-    partition_populations = Dict{UInt, UInt}()
-    sizehint!(partition_populations, Int(num_partitions))
-    for (partition_id, counties) in partition_to_counties
-        pop::UInt = 0
-        for county_id in counties
-            pop += county_populations[county_id]
-        end
-        partition_populations[partition_id] = pop
-    end
-
-    # Candidate county swaps
-    swaps_candidates = Dict{UInt, Dict{UInt, Float64}}(
-        id => Dict{UInt, Float64}() for id in county_ids)
-
-    # Construct partitioner object
-    partitioner = Partitioner(
-        temperature,
-        population_weight,
-        adjacency_graph,
-        interaction_graph,
-        county_to_partition,
-        partition_to_counties,
-        county_populations,
-        partition_populations,
-        swaps_candidates,
-        nothing,
-    )
-
-    "Logic for key presses"
-    function on_key(event)
-        if event.key == "h"
-            println("Commands")
-            println("--------")
-            println("h: help message")
-            println("esc: exit")
-            println("p: pause animation")
-            println("i: partitioner state")
-            println("-/=: adjust temperature")
-            println("[/]: adjust population weight")
-        elseif event.key == "i"
-            print_info(partitioner)
-        elseif event.key == "-"
-            partitioner.temperature /= 2
-            println("Temperature: ", partitioner.temperature)
-        elseif event.key == "="
-            partitioner.temperature *= 2
-            println("Temperature: ", partitioner.temperature)
-        elseif event.key == "["
-            partitioner.population_weight /= 2
-            println("Population weight: ", partitioner.population_weight)
-        elseif event.key == "]"
-            partitioner.population_weight *= 2
-            println("Population weight: ", partitioner.population_weight)
-        end
-    end
-
-    # Register logic for key presses
-    partitioner.on_key_func = on_key
-
-    # Find swap candidates
-    @Base.Threads.threads for county_id in county_ids
-        update_county_swap_candidates!(partitioner, county_id)
-    end
-
-    return partitioner
-
-end
-
-function print_info(partitioner::Partitioner)
+function print_info(partitioner::Partitioner)::Nothing
 
     # Print partitioner state
     println("Partitioner properties")
@@ -283,7 +232,7 @@ end
 function update_county_swap_candidates!(
     partitioner::Partitioner,
     county_id::UInt,
-    )
+    )::Nothing
 
     # Reset list of swap candidates
     swap_candidates = partitioner.swap_candidates[county_id]
@@ -399,7 +348,7 @@ function swap_county!(
     partitioner::Partitioner,
     county_id::UInt,
     partition_id::UInt;
-    )
+    )::Nothing
 
     # Source and destination partitions
     src_partition_id = partitioner.county_to_partition[county_id]
@@ -432,7 +381,7 @@ function swap_county!(
 
 end
 
-function step!(partitioner::Partitioner)
+function step!(partitioner::Partitioner)::Nothing
 
     # Return immediately if there are no candidate swaps
     num_swap_candidates::Int = 0

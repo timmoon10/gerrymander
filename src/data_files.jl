@@ -352,7 +352,7 @@ function load_county_boundaries()::Dict{UInt, MultiPolygonCoords}
 end
 
 function load_county_boundaries_lambert(
-    county_ids;
+    county_ids::Any;  # Iterable{UInt}
     resolution::Int = 1024,
     )::Dict{UInt, MultiPolygonCoords}
 

@@ -131,7 +131,7 @@ end
 function downsample_county_boundaries!(
     county_boundaries::Dict{UInt, MultiPolygonCoords},
     grid_size::Float64,
-    )
+    )::Nothing
 
     # Helper functions to convert to/from grid
     to_grid = let grid_size::Float64 = grid_size

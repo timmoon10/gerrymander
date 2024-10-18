@@ -1,6 +1,6 @@
 include(joinpath(@__DIR__, "Gerrymander.jl"))
 
-function main()
+function main()::Nothing
 
     # State name
     state_id::UInt = 34

@@ -11,7 +11,6 @@ import PyPlot
 import ..Gerrymander
 import ..DataFiles
 import ..Geometry
-using ..Geometry: MultiPolygonCoords, PlotLine
 
 @Memoize.memoize function color_list()::Vector{Tuple{Float64, Float64, Float64}}
     colors = [
@@ -35,47 +34,47 @@ mutable struct Plotter
     partitioner::Any
     county_ids::Vector{UInt}
     partition_ids::Vector{UInt}
-    county_boundaries::Dict{UInt, MultiPolygonCoords}
-    boundary_lines::Vector{PlotLine}
+    county_boundaries::Dict{UInt, Geometry.MultiPolygonCoords}
+    boundary_lines::Vector{Geometry.PlotLine}
     is_paused::Bool
-end
 
-function Plotter(
-    partitioner::Any,
-    )::Plotter
+    function Plotter(
+        partitioner::Any,
+        )::Plotter
 
-    # Get lists of counties and partitions
-    county_ids = Set{UInt}()
-    partition_ids = Set{UInt}()
-    for (county_id, partition_id) in partitioner.county_to_partition
-        push!(county_ids, county_id)
-        push!(partition_ids, partition_id)
+        # Get lists of counties and partitions
+        county_ids = Set{UInt}()
+        partition_ids = Set{UInt}()
+        for (county_id, partition_id) in partitioner.county_to_partition
+            push!(county_ids, county_id)
+            push!(partition_ids, partition_id)
+        end
+        county_ids = collect(county_ids)
+        partition_ids = collect(partition_ids)
+        sort!(county_ids)
+        sort!(partition_ids)
+
+        # Get county boundaries in Lambert projection
+        county_boundaries = DataFiles.load_county_boundaries_lambert(county_ids)
+
+        # Convert boundaries into lines
+        boundary_lines = Geometry.county_boundaries_to_lines(county_boundaries)
+
+        # Construct plotter
+        return new(
+            partitioner,
+            county_ids,
+            partition_ids,
+            county_boundaries,
+            boundary_lines,
+            false,
+        )
+
     end
-    county_ids = collect(county_ids)
-    partition_ids = collect(partition_ids)
-    sort!(county_ids)
-    sort!(partition_ids)
-
-    # Get county boundaries in Lambert projection
-    county_boundaries = DataFiles.load_county_boundaries_lambert(county_ids)
-
-    # Convert boundaries into lines
-    boundary_lines = Geometry.county_boundaries_to_lines(county_boundaries)
-
-    # Construct plotter
-    out = Plotter(
-        partitioner,
-        county_ids,
-        partition_ids,
-        county_boundaries,
-        boundary_lines,
-        false,
-    )
-    return out
 
 end
 
-function plot(plotter::Plotter)
+function plot(plotter::Plotter)::Nothing
 
     # Compute partition shapes
     partition_shapes = Geometry.make_partition_shapes(
@@ -110,7 +109,7 @@ end
 function animate!(
     plotter::Plotter;
     frame_interval::UInt = UInt(1000),
-    )
+    )::Nothing
 
     # Initialize plot
     fig = PyPlot.figure()
@@ -159,7 +158,7 @@ function animate!(
     running_mean_decay = 0.5
 
     "Update animation frame"
-    function update_frame(frame::Int)
+    function update_frame(frame::Int)::Nothing
 
         # Skip frame if paused
         if plotter.is_paused
@@ -219,7 +218,7 @@ function animate!(
     )
 
     "Logic for key presses"
-    function on_key(event)
+    function on_key(event)::Nothing
 
         # Lock mutex to avoid interfering with animation
         lock(anim_lock)
