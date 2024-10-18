@@ -8,74 +8,6 @@ import ..DataFiles
 import ..DataGraphs
 import ..Graph
 
-function voronoi_partition(
-    num_partitions::UInt,
-    graph::Graph.WeightedGraph,
-    state_ids::AbstractVector{UInt},
-    )::Tuple{Dict{UInt, UInt}, Dict{UInt, Set{UInt}}}
-
-    # County data
-    county_population_data = DataFiles.load_county_populations(state_ids)
-    num_counties = size(county_population_data, 1)
-    county_ids = Vector{UInt}(county_population_data[:, 1])
-    county_points = Dict{UInt, Vector{Float64}}(
-        county_ids[i] => county_population_data[i, 3:5]
-        for i in 1:num_counties)
-
-    # Partition data
-    partition_ids = collect(1:num_partitions)
-    county_to_partition = Dict{UInt, UInt}()
-    partition_to_counties = Dict{UInt, Set{UInt}}(
-        id => Set{UInt}() for id in partition_ids)
-
-    "Square of Euclidean distance between 3D points"
-    function dist_sq(
-        point1::Vector{Float64},
-        point2::Vector{Float64},
-        )::Float64
-        @inbounds dx = point1[1] - point2[1]
-        @inbounds dy = point1[2] - point2[2]
-        @inbounds dz = point1[3] - point2[3]
-        return dx * dx + dy * dy + dz * dz
-    end
-
-    # Randomly pick counties
-    center_ids = [
-        county_ids[i]
-        for i in Random.randperm(num_counties)[1:num_partitions]]
-    center_points = [county_points[id] for id in center_ids]
-    for (partition_id, county_id) in enumerate(center_ids)
-        county_to_partition[county_id] = partition_id
-        push!(partition_to_counties[partition_id], county_id)
-    end
-
-    # Assign points by Voronoi region
-    for (county_id, point) in county_points
-        if haskey(county_to_partition, county_id)
-            continue
-        end
-        partition_id = argmin(
-            [dist_sq(point, center) for center in center_points])
-        county_to_partition[county_id] = partition_id
-        push!(partition_to_counties[partition_id], county_id)
-    end
-
-    # Make sure partitions are contiguous
-    graph = DataGraphs.county_adjacency_graph(state_ids)
-    center_ids = Dict{UInt, UInt}(
-        partition_id => county_id
-        for (partition_id, county_id) in enumerate(center_ids))
-    Graph.make_partition_contiguous!(
-        county_to_partition,
-        partition_to_counties,
-        center_ids,
-        graph,
-    )
-
-    return (county_to_partition, partition_to_counties)
-
-end
-
 mutable struct Partitioner
     temperature::Float64
     population_weight::Float64
@@ -114,10 +46,9 @@ mutable struct Partitioner
             for i in 1:num_counties)
 
         # Initial partition
-        (county_to_partition, partition_to_counties) = voronoi_partition(
+        (county_to_partition, partition_to_counties) = Graph.random_partition(
             num_partitions,
             adjacency_graph,
-            state_ids,
         )
         partition_populations = Dict{UInt, UInt}()
         sizehint!(partition_populations, Int(num_partitions))
