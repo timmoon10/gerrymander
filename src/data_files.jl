@@ -351,4 +351,65 @@ function load_county_boundaries()::Dict{UInt, MultiPolygonCoords}
 
 end
 
+function load_county_boundaries_lambert(
+    county_ids;
+    resolution::Int = 1024,
+    )::Dict{UInt, MultiPolygonCoords}
+
+    # Return immediately if cache file exists
+    cache_file = joinpath(root_dir(), "results", "county_boundaries_lambert.bin")
+    if isfile(cache_file)
+        return county_boundaries_from_file(cache_file)
+    end
+
+    # List of counties
+    county_ids::Vector{UInt} = collect(county_ids)
+
+    # Get county boundaries
+    county_boundaries = Dict{UInt, MultiPolygonCoords}()
+    let
+        full_county_boundaries = load_county_boundaries()
+        @inbounds for county_id in county_ids
+            county_boundaries[county_id] = full_county_boundaries[county_id]
+        end
+    end
+
+    # Convert coordinates to Lambert projection
+    lambert_projection = Geometry.LambertProjection(county_boundaries)
+    Geometry.apply_lambert!(county_boundaries, lambert_projection)
+
+    # Downsample boundaries if needed
+    if resolution > 0
+
+        # Compute grid size for downsampling
+        coord_bounds = Vector{Tuple{Float64, Float64, Float64, Float64}}(
+            undef,
+            length(county_ids),
+        )
+        @Base.Threads.threads for i in 1:length(county_ids)
+            county_id = county_ids[i]
+            coord_bounds[i] = Geometry.multipolygon_bounds(county_boundaries[county_id])
+        end
+        (min_x, max_x, min_y, max_y) = coord_bounds[1]
+        @inbounds for (min_xi, max_xi, min_yi, max_yi) in coord_bounds[2:end]
+            min_x = min(min_x, min_xi)
+            max_x = max(max_x, max_xi)
+            min_y = min(min_y, min_yi)
+            max_y = max(max_y, max_yi)
+        end
+        grid_size = min(max_x - min_x, max_y - min_y) / resolution
+
+        # Downsample boundaries
+        Geometry.downsample_county_boundaries!(county_boundaries, grid_size)
+
+    end
+
+    # Write results to file
+    county_boundaries_to_file(county_boundaries, cache_file)
+    println("Saved county boundaries (in Lambert projection) at $cache_file...")
+
+    return county_boundaries
+
+end
+
 end  # module DataFiles

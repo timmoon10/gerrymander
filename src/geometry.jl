@@ -307,9 +307,12 @@ function downsample_county_boundaries!(
 
 end
 
+# x- and y-coordinates for a line
+PlotLine = Tuple{Vector{Float64}, Vector{Float64}}
+
 function county_boundaries_to_lines(
     county_boundaries::Dict{UInt, MultiPolygonCoords},
-    )::Vector{Tuple{Vector{Float64}, Vector{Float64}}}
+    )::Vector{PlotLine}
 
     "Convert boundaries into line segments"
     function make_segments(
@@ -351,7 +354,7 @@ function county_boundaries_to_lines(
     function walk_segments!(
         segments::Dict{Vector{Float64}, Set{Vector{Float64}}},
         coord::Vector{Float64},
-        )::Tuple{Vector{Float64}, Vector{Float64}}
+        )::PlotLine
 
         # Walk over segments until stuck
         xs = [coord[1]]
@@ -381,7 +384,7 @@ function county_boundaries_to_lines(
     end
 
     # Convert county boundaries into lines
-    lines = Vector{Tuple{Vector{Float64}, Vector{Float64}}}()
+    lines = Vector{PlotLine}()
     segments = make_segments(county_boundaries)
     while !isempty(segments)
         coord = first(keys(segments))
@@ -392,6 +395,57 @@ function county_boundaries_to_lines(
         push!(lines, ([xs2; xs1[2:end]], [ys2; ys1[2:end]]))
     end
     return lines
+
+end
+
+function make_partition_shapes(
+    county_boundaries::Dict{UInt, MultiPolygonCoords},
+    partition_to_counties::Dict{UInt, Set{UInt}},
+    )::Dict{UInt, Vector{Vector{PlotLine}}}
+
+    # Iterate through partitions
+    partition_ids = collect(keys(partition_to_counties))
+    partition_shapes = Vector{Vector{Vector{PlotLine}}}(undef, length(partition_ids))
+    @Base.Threads.threads for i in 1:length(partition_ids)
+
+        # Get county shapes
+        multipolygon = MultiPolygonCoords()
+        @inbounds for county_id in partition_to_counties[partition_ids[i]]
+            append!(multipolygon, county_boundaries[county_id])
+        end
+
+        # Compute union of county shapes
+        multipolygon = LibGEOS.MultiPolygon(multipolygon)
+        multipolygon = LibGEOS.unaryUnion(multipolygon)
+        multipolygon = LibGEOS.MultiPolygon(multipolygon)
+        multipolygon = GeoInterface.coordinates(multipolygon)
+
+        # Convert partition shape to lines
+        plot_multipolygon = Vector{Vector{PlotLine}}()
+        sizehint!(plot_multipolygon, length(multipolygon))
+        @inbounds for polygon in multipolygon
+            plot_polygon = Vector{Tuple{Vector{Float64}, Vector{Float64}}}()
+            push!(plot_multipolygon, plot_polygon)
+            sizehint!(plot_polygon, length(polygon))
+            @inbounds for line in polygon
+                x = Vector{Float64}()
+                y = Vector{Float64}()
+                push!(plot_polygon, (x, y))
+                sizehint!(x, length(line))
+                sizehint!(y, length(line))
+                @inbounds for point in line
+                    @inbounds push!(x, point[1])
+                    @inbounds push!(y, point[2])
+                end
+            end
+        end
+        partition_shapes[i] = plot_multipolygon
+
+    end
+    partition_shapes = Dict{UInt, Vector{Vector{PlotLine}}}(
+        partition_ids[i] => shape for (i, shape) in enumerate(partition_shapes))
+
+    return partition_shapes
 
 end
 

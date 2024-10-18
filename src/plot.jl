@@ -1,9 +1,6 @@
 module Plot
 
 import Base.GC
-import Base.Threads
-import GeoInterface
-import LibGEOS
 import Memoize
 import PyCall
 
@@ -14,7 +11,7 @@ import PyPlot
 import ..Gerrymander
 import ..DataFiles
 import ..Geometry
-using ..Geometry: MultiPolygonCoords
+using ..Geometry: MultiPolygonCoords, PlotLine
 
 @Memoize.memoize function color_list()::Vector{Tuple{Float64, Float64, Float64}}
     colors = [
@@ -33,9 +30,6 @@ function pick_color(i::UInt)::Tuple{Float64, Float64, Float64}
     colors = color_list()
     return colors[i % length(colors) + 1]
 end
-
-# x- and y-coordinates for a line
-PlotLine = Tuple{Vector{Float64}, Vector{Float64}}
 
 mutable struct Plotter
     partitioner::Any
@@ -62,39 +56,8 @@ function Plotter(
     sort!(county_ids)
     sort!(partition_ids)
 
-    # Get county boundaries
-    county_boundaries = Dict{UInt, MultiPolygonCoords}()
-    let
-        full_county_boundaries = DataFiles.load_county_boundaries()
-        @inbounds for county_id in county_ids
-            county_boundaries[county_id] = full_county_boundaries[county_id]
-        end
-    end
-
-    # Convert coordinates to Lambert projection
-    lambert_projection = Geometry.LambertProjection(county_boundaries)
-    Geometry.apply_lambert!(county_boundaries, lambert_projection)
-
-    # Compute grid size for downsampling
-    coord_bounds = Vector{Tuple{Float64, Float64, Float64, Float64}}(
-        undef,
-        length(county_ids),
-    )
-    @Base.Threads.threads for i in 1:length(county_ids)
-        county_id = county_ids[i]
-        coord_bounds[i] = Geometry.multipolygon_bounds(county_boundaries[county_id])
-    end
-    (min_x, max_x, min_y, max_y) = coord_bounds[1]
-    @inbounds for bounds in coord_bounds[2:end]
-        @inbounds min_x = min(min_x, bounds[1])
-        @inbounds max_x = max(max_x, bounds[2])
-        @inbounds min_y = min(min_y, bounds[3])
-        @inbounds max_y = max(max_y, bounds[4])
-    end
-    grid_size = min(max_x - min_x, max_y - min_y) / 1024
-
-    # Downsample boundaries
-    Geometry.downsample_county_boundaries!(county_boundaries, grid_size)
+    # Get county boundaries in Lambert projection
+    county_boundaries = DataFiles.load_county_boundaries_lambert(county_ids)
 
     # Convert boundaries into lines
     boundary_lines = Geometry.county_boundaries_to_lines(county_boundaries)
@@ -112,62 +75,13 @@ function Plotter(
 
 end
 
-function make_partition_shapes(plotter)::Dict{UInt, Vector{Vector{PlotLine}}}
-
-    # Objects from plotter
-    partition_ids = plotter.partition_ids
-    partition_to_counties = plotter.partitioner.partition_to_counties
-    county_boundaries = plotter.county_boundaries
-
-    # Iterate through partitions
-    partition_shapes = Vector{Vector{Vector{PlotLine}}}(undef, length(partition_ids))
-    @Base.Threads.threads for i in 1:length(partition_ids)
-
-        # Get county shapes
-        multipolygon = MultiPolygonCoords()
-        @inbounds for county_id in partition_to_counties[partition_ids[i]]
-            append!(multipolygon, county_boundaries[county_id])
-        end
-
-        # Compute union of county shapes
-        multipolygon = LibGEOS.MultiPolygon(multipolygon)
-        multipolygon = LibGEOS.unaryUnion(multipolygon)
-        multipolygon = LibGEOS.MultiPolygon(multipolygon)
-        multipolygon = GeoInterface.coordinates(multipolygon)
-
-        # Convert partition shape to lines
-        plot_multipolygon = Vector{Vector{PlotLine}}()
-        sizehint!(plot_multipolygon, length(multipolygon))
-        @inbounds for polygon in multipolygon
-            plot_polygon = Vector{Tuple{Vector{Float64}, Vector{Float64}}}()
-            push!(plot_multipolygon, plot_polygon)
-            sizehint!(plot_polygon, length(polygon))
-            @inbounds for line in polygon
-                x = Vector{Float64}()
-                y = Vector{Float64}()
-                push!(plot_polygon, (x, y))
-                sizehint!(x, length(line))
-                sizehint!(y, length(line))
-                @inbounds for point in line
-                    @inbounds push!(x, point[1])
-                    @inbounds push!(y, point[2])
-                end
-            end
-        end
-        partition_shapes[i] = plot_multipolygon
-
-    end
-    partition_shapes = Dict{UInt, Vector{Vector{PlotLine}}}(
-        partition_ids[i] => shape for (i, shape) in enumerate(partition_shapes))
-
-    return partition_shapes
-
-end
-
 function plot(plotter::Plotter)
 
     # Compute partition shapes
-    partition_shapes = make_partition_shapes(plotter)
+    partition_shapes = Geometry.make_partition_shapes(
+        plotter.county_boundaries,
+        plotter.partitioner.partition_to_counties,
+    )
 
     # Plot partitions
     for partition_id in plotter.partition_ids
@@ -206,7 +120,10 @@ function animate!(
     function plot_frame()
 
         # Compute partition shapes
-        partition_shapes = make_partition_shapes(plotter)
+        partition_shapes = Geometry.make_partition_shapes(
+            plotter.county_boundaries,
+            plotter.partitioner.partition_to_counties,
+        )
 
         # Reset plot
         ax.clear()
