@@ -4,7 +4,12 @@ import Base.Threads
 import GeoInterface
 import LibGEOS
 
-using ..Constants: MultiPolygonCoords, PolygonCoords
+# A polygon is composed of one or more lines, each of which is
+# composed of 2D coordinates. Each line forms a complete ring. The
+# polygon's first line is its external border, and other lines are
+# internal borders.
+const PolygonCoords = Vector{Vector{Vector{Float64}}}
+const MultiPolygonCoords = Vector{PolygonCoords}
 
 function multipolygon_bounds(
     multipolygon::MultiPolygonCoords,
@@ -24,6 +29,103 @@ function multipolygon_bounds(
         end
     end
     return (min_x, max_x, min_y, max_y)
+end
+
+"Parameters for Lambert conformal conic projection"
+struct LambertProjection
+    ref_long::Float64
+    ref_lat::Float64
+    n::Float64
+    F::Float64
+    rho_ref::Float64
+
+    function LambertProjection(
+        county_boundaries::Dict{UInt, MultiPolygonCoords},
+        )::LambertProjection
+
+        # Determine region boundaries
+        county_ids = collect(keys(county_boundaries))
+        coord_bounds = Vector{Tuple{Float64, Float64, Float64, Float64}}(
+            undef,
+            length(county_ids),
+        )
+        @Base.Threads.threads for i in 1:length(county_ids)
+            county_id = county_ids[i]
+            coord_bounds[i] = multipolygon_bounds(county_boundaries[county_id])
+        end
+        (min_long, max_long, min_lat, max_lat) = coord_bounds[1]
+        @inbounds for bounds in coord_bounds[2:end]
+            @inbounds min_long = min(min_long, bounds[1])
+            @inbounds max_long = max(max_long, bounds[2])
+            @inbounds min_lat = min(min_lat, bounds[3])
+            @inbounds max_lat = max(max_lat, bounds[4])
+        end
+        min_long *= pi / 180
+        max_long *= pi / 180
+        min_lat *= pi / 180
+        max_lat *= pi / 180
+
+        # Compute Lambert projection parameters
+        ref_long = (min_long + max_long) / 2
+        ref_lat = (min_lat + max_lat) / 2
+        n = (
+            log(cos(max_lat) * sec(min_lat))
+            / log(tan(pi/4 + min_lat/2) * cot(pi/4 + max_lat/2))
+        )
+        F = (cos(max_lat) * tan(pi/4+max_lat/2)^n) / n
+        rho_ref = F * cot(pi/4 + ref_lat/2)^n
+        return new(ref_long, ref_lat, n, F, rho_ref)
+
+    end
+
+end
+
+function (lambert_projection::LambertProjection)(
+    long_deg::Float64,
+    lat_deg::Float64,
+    )::Tuple{Float64, Float64}
+    ref_long = lambert_projection.ref_long
+    ref_lat = lambert_projection.ref_lat
+    n = lambert_projection.n
+    F = lambert_projection.F
+    rho_ref = lambert_projection.rho_ref
+    deg_to_rad::Float64 = pi / 180
+    long = deg_to_rad * long_deg
+    lat = deg_to_rad * lat_deg
+    rho = F * cot(pi/4 + lat/2)^n
+    x = rho * sin(n * (long - ref_long))
+    y = rho_ref - rho * cos(n * (long - ref_long))
+    return (x, y)
+end
+
+function apply_lambert!(
+    multipolygon::MultiPolygonCoords,
+    lambert_projection::LambertProjection,
+    )::Nothing
+    @inbounds for polygon in multipolygon
+        @inbounds for line in polygon
+            @inbounds for coord in line
+                @inbounds long = coord[1]
+                @inbounds lat = coord[2]
+                (x, y) = lambert_projection(long, lat)
+                @inbounds coord[1] = x
+                @inbounds coord[2] = y
+            end
+        end
+    end
+end
+
+function apply_lambert!(
+    county_boundaries::Dict{UInt, MultiPolygonCoords},
+    lambert_projection::LambertProjection,
+    )::Nothing
+    county_ids = collect(keys(county_boundaries))
+    @Base.Threads.threads for county_id in county_ids
+        apply_lambert!(
+            county_boundaries[county_id],
+            lambert_projection,
+        )
+    end
 end
 
 function downsample_county_boundaries!(
