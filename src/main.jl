@@ -23,8 +23,7 @@ function main()
     plotter = Gerrymander.Plot.Plotter(partitioner)
 
     # Animate
-    #Gerrymander.Plot.animate!(plotter)
-    Gerrymander.Plot.plot(plotter)
+    Gerrymander.Plot.animate!(plotter)
 
 end
 
