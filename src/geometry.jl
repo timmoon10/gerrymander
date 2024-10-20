@@ -401,11 +401,14 @@ end
 function make_partition_shapes(
     county_boundaries::Dict{UInt, MultiPolygonCoords},
     partition_to_counties::Dict{UInt, Set{UInt}},
-    )::Dict{UInt, Vector{Vector{PlotLine}}}
+    )::Dict{UInt, Vector{Vector{Vector{Tuple{Float64, Float64}}}}}
 
     # Iterate through partitions
     partition_ids = collect(keys(partition_to_counties))
-    partition_shapes = Vector{Vector{Vector{PlotLine}}}(undef, length(partition_ids))
+    partition_shapes = Vector{Vector{Vector{Vector{Tuple{Float64, Float64}}}}}(
+        undef,
+        length(partition_ids),
+    )
     @Base.Threads.threads for i in 1:length(partition_ids)
 
         # Get county shapes
@@ -421,28 +424,25 @@ function make_partition_shapes(
         multipolygon = GeoInterface.coordinates(multipolygon)
 
         # Convert partition shape to lines
-        plot_multipolygon = Vector{Vector{PlotLine}}()
+        plot_multipolygon = Vector{Vector{Vector{Tuple{Float64, Float64}}}}()
         sizehint!(plot_multipolygon, length(multipolygon))
         @inbounds for polygon in multipolygon
-            plot_polygon = Vector{Tuple{Vector{Float64}, Vector{Float64}}}()
+            plot_polygon = Vector{Vector{Tuple{Float64, Float64}}}()
             push!(plot_multipolygon, plot_polygon)
             sizehint!(plot_polygon, length(polygon))
             @inbounds for line in polygon
-                x = Vector{Float64}()
-                y = Vector{Float64}()
-                push!(plot_polygon, (x, y))
-                sizehint!(x, length(line))
-                sizehint!(y, length(line))
+                plot_line = Vector{Tuple{Float64, Float64}}()
+                push!(plot_polygon, plot_line)
+                sizehint!(plot_line, length(line))
                 @inbounds for point in line
-                    @inbounds push!(x, point[1])
-                    @inbounds push!(y, point[2])
+                    @inbounds push!(plot_line, (point[1], point[2]))
                 end
             end
         end
         partition_shapes[i] = plot_multipolygon
 
     end
-    partition_shapes = Dict{UInt, Vector{Vector{PlotLine}}}(
+    partition_shapes = Dict{UInt, Vector{Vector{Vector{Tuple{Float64, Float64}}}}}(
         partition_ids[i] => shape for (i, shape) in enumerate(partition_shapes))
 
     return partition_shapes

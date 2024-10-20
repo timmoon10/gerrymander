@@ -1,12 +1,8 @@
 module Plot
 
 import Base.GC
+import GLMakie
 import Memoize
-import PyCall
-
-using PyCall
-@pyimport matplotlib.animation as animation
-import PyPlot
 
 import ..Gerrymander
 import ..DataFiles
@@ -74,7 +70,7 @@ mutable struct Plotter
 
 end
 
-function plot(plotter::Plotter)::Nothing
+function plot(plotter::Plotter)
 
     # Compute partition shapes
     partition_shapes = Geometry.make_partition_shapes(
@@ -82,27 +78,38 @@ function plot(plotter::Plotter)::Nothing
         plotter.partitioner.partition_to_counties,
     )
 
+    # Initialize plot
+    fig = GLMakie.Figure()
+    ax = GLMakie.Axis(fig[1, 1], aspect=GLMakie.DataAspect())
+    GLMakie.hidespines!(ax)
+    GLMakie.hidedecorations!(ax)
+
     # Plot partitions
     for partition_id in plotter.partition_ids
         color = pick_color(partition_id)
         @inbounds for polygon in partition_shapes[partition_id]
-            @inbounds for (x, y) in polygon
-                PyPlot.fill(x, y, color=color)
-                PyPlot.plot(x, y, "k-", linewidth=1)
-            end
+            GLMakie.poly!(
+                polygon,
+                color=GLMakie.RGBf(color[1], color[2], color[3]),
+                stroke_depth_shift=0,
+                strokecolor=:black,
+                strokewidth=2,
+            )
+
         end
     end
 
     # Plot county boundaries
     @inbounds for (x, y) in plotter.boundary_lines
-        PyPlot.plot(x, y, "k-", linewidth=0.25)
+        GLMakie.lines!(x, y, color = :black, linewidth = 0.25)
     end
 
-    # Show plot
-    PyPlot.axis("off")
-    PyPlot.axis("tight")
-    PyPlot.axis("equal")
-    PyPlot.show()
+    # Display plot
+    GLMakie.display(fig)
+
+    # Stall by waiting for user input
+    println("Press enter to exit...")
+    readline()
 
 end
 
