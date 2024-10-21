@@ -410,7 +410,7 @@ function step!(partitioner::Partitioner)
     prob_denom = scores[end]
 
     # Pick county to swap and perform swap
-    while true
+    for _ in 1:20
         rand = Random.rand(Float64)
         i = Base.Sort.searchsortedfirst(scores, rand * prob_denom)
         (county_id, partition_id) = swaps[i]
