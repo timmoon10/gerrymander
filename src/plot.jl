@@ -207,6 +207,7 @@ function animate!(plotter::Plotter)
             unlock(command_lock)
             print("Command: ")
             command = readline()
+            command = lowercase(strip(command))
             if command == "exit" || command == "quit"
                 put!(ch, "exit")
                 loop_is_active = false

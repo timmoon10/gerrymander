@@ -78,33 +78,8 @@ mutable struct Partitioner
             nothing,
         )
 
-        "Logic for key presses"
-        function parse_command_func(command::String)
-            if command == "help"
-                println()
-                println("Commands")
-                println("--------")
-                println("help: help message")
-                println("exit: exit")
-                println("pause: pause animation")
-                println("info: partitioner state")
-                println()
-                println("Properties")
-                println("----------")
-                println("temperature")
-                println("population weight")
-                println()
-            elseif command == "info"
-                println()
-                print_info(partitioner)
-                println()
-            else
-                println("Unrecognized command: ", command)
-            end
-        end
-
         # Register logic for user commands
-        partitioner.parse_command_func = parse_command_func
+        partitioner.parse_command_func = _make_parse_command_func(partitioner)
 
         # Find swap candidates
         @Base.Threads.threads for county_id in county_ids
@@ -117,7 +92,61 @@ mutable struct Partitioner
 
 end
 
+function _make_parse_command_func(partitioner::Partitioner)::Function
+
+    "Logic for user commands"
+    function parse_command_func(command::String)
+
+        # Help message
+        if command == "help"
+            println()
+            println("Commands")
+            println("--------")
+            println("help: help message")
+            println("exit: exit")
+            println("pause: pause animation")
+            println("info: partitioner state")
+            println()
+            println("Properties")
+            println("----------")
+            println("temperature")
+            println("population weight")
+            println()
+            return
+        end
+
+        # Partitioner info
+        if command == "info"
+            println()
+            print_info(partitioner)
+            println()
+            return
+        end
+
+        # Partitioner properties
+        command_split = split(command, "=", limit=2)
+        name = strip(command_split[1])
+        value = length(command_split) > 1 ? strip(command_split[2]) : ""
+        if name == "temperature"
+            partitioner.temperature = parse(Float64, value)
+            return
+        end
+        if name == "population weight"
+            partitioner.population_weight = parse(Float64, value)
+            return
+        end
+
+        # Unrecognized command
+        println("Unrecognized command: ", command)
+
+    end
+
+    return parse_command_func
+
+end
+
 function print_info(partitioner::Partitioner)
+
     # Print partitioner state
     println("Partitioner properties")
     println("----------------------")
