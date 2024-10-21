@@ -18,7 +18,7 @@ mutable struct Partitioner
     county_populations::Dict{UInt, UInt}
     partition_populations::Dict{UInt, UInt}
     swap_candidates::Dict{UInt, Dict{UInt, Float64}}
-    on_key_func::Union{Function, Nothing}
+    parse_command_func::Union{Function, Nothing}
 
     function Partitioner(
         num_partitions::UInt,
@@ -79,35 +79,32 @@ mutable struct Partitioner
         )
 
         "Logic for key presses"
-        function on_key(event)::Nothing
-            if event.key == "h"
+        function parse_command_func(command::String)
+            if command == "help"
+                println()
                 println("Commands")
                 println("--------")
-                println("h: help message")
-                println("esc: exit")
-                println("p: pause animation")
-                println("i: partitioner state")
-                println("-/=: adjust temperature")
-                println("[/]: adjust population weight")
-            elseif event.key == "i"
+                println("help: help message")
+                println("exit: exit")
+                println("pause: pause animation")
+                println("info: partitioner state")
+                println()
+                println("Properties")
+                println("----------")
+                println("temperature")
+                println("population weight")
+                println()
+            elseif command == "info"
+                println()
                 print_info(partitioner)
-            elseif event.key == "-"
-                partitioner.temperature /= 2
-                println("Temperature: ", partitioner.temperature)
-            elseif event.key == "="
-                partitioner.temperature *= 2
-                println("Temperature: ", partitioner.temperature)
-            elseif event.key == "["
-                partitioner.population_weight /= 2
-                println("Population weight: ", partitioner.population_weight)
-            elseif event.key == "]"
-                partitioner.population_weight *= 2
-                println("Population weight: ", partitioner.population_weight)
+                println()
+            else
+                println("Unrecognized command: ", command)
             end
         end
 
-        # Register logic for key presses
-        partitioner.on_key_func = on_key
+        # Register logic for user commands
+        partitioner.parse_command_func = parse_command_func
 
         # Find swap candidates
         @Base.Threads.threads for county_id in county_ids
@@ -120,8 +117,7 @@ mutable struct Partitioner
 
 end
 
-function print_info(partitioner::Partitioner)::Nothing
-
+function print_info(partitioner::Partitioner)
     # Print partitioner state
     println("Partitioner properties")
     println("----------------------")
@@ -156,14 +152,13 @@ function print_info(partitioner::Partitioner)::Nothing
         end
         println("Partition ", Int(partition_id), ": ", partition_affinity)
     end
-    print("\n")
 
 end
 
 function update_county_swap_candidates!(
     partitioner::Partitioner,
     county_id::UInt,
-    )::Nothing
+    )
 
     # Reset list of swap candidates
     swap_candidates = partitioner.swap_candidates[county_id]
@@ -279,7 +274,7 @@ function swap_county!(
     partitioner::Partitioner,
     county_id::UInt,
     partition_id::UInt;
-    )::Nothing
+    )
 
     # Source and destination partitions
     src_partition_id = partitioner.county_to_partition[county_id]
@@ -312,7 +307,7 @@ function swap_county!(
 
 end
 
-function step!(partitioner::Partitioner)::Nothing
+function step!(partitioner::Partitioner)
 
     # Return immediately if there are no candidate swaps
     num_swap_candidates::Int = 0

@@ -31,6 +31,7 @@ mutable struct Plotter
     partition_ids::Vector{UInt}
     county_boundaries::Dict{UInt, Geometry.MultiPolygonCoords}
     boundary_lines::Vector{Geometry.PlotLine}
+    frame_time::Float64  # sec
     is_paused::Bool
 
     function Plotter(
@@ -62,6 +63,7 @@ mutable struct Plotter
             partition_ids,
             county_boundaries,
             boundary_lines,
+            0.125,
             false,
         )
 
@@ -112,10 +114,7 @@ function plot(plotter::Plotter)
 
 end
 
-function animate!(
-    plotter::Plotter;
-    frame_interval::UInt = UInt(1000),
-    )
+function animate!(plotter::Plotter)
 
     # Initialize plot
     fig = GLMakie.Figure()
@@ -124,10 +123,17 @@ function animate!(
     GLMakie.hidespines!(ax)
     GLMakie.hidedecorations!(ax)
 
-    function update_frame()
+    # State for frame updates
+    step_time::Float64 = plotter.frame_time
+    plot_time::Float64 = plotter.frame_time
+    time_decay = 0.5
 
-        # Perform partitioner steps
-        Gerrymander.step!(plotter.partitioner)
+    function steps_per_frame()::Int
+        num_steps = floor(Int, (plotter.frame_time - plot_time) / step_time)
+        num_steps = max(num_steps, 1)
+    end
+
+    function update_plot()
 
         # Compute partition shapes
         partition_shapes = Geometry.make_partition_shapes(
@@ -156,7 +162,7 @@ function animate!(
 
         # Plot county boundaries
         @inbounds for (x, y) in plotter.boundary_lines
-            GLMakie.lines!(x, y, color = :black, linewidth = 0.25)
+            GLMakie.lines!(x, y, color=:black, linewidth=0.25)
         end
 
         # Display plot
@@ -164,153 +170,106 @@ function animate!(
 
     end
 
-    # Animation loop
-    while true
-        update_frame()
-        sleep(0.1)
+    # Initialize plot
+    update_plot()
+
+    function parse_command(command::String)
+        if command == "pause" || command == "unpause"
+            if plotter.is_paused
+                println("Unpausing...")
+            else
+                println("Pausing...")
+            end
+            plotter.is_paused = !plotter.is_paused
+        elseif command == "anim info" || command == "frame info"
+            println()
+            println("Animation info")
+            println("--------------")
+            println("Paused: ", plotter.is_paused)
+            println("Partitioner step time: ", step_time * 1e3, " ms")
+            println("Plot time: ", plot_time * 1e3, " ms")
+            println("Frame time: ", plotter.frame_time * 1e3, " ms")
+            println("Steps per frame: ", steps_per_frame())
+            println()
+        elseif hasfield(typeof(plotter.partitioner), :parse_command_func)
+            plotter.partitioner.parse_command_func(command)
+        else
+            println("Unrecognized command: ", command)
+        end
     end
 
+    # Spawn thread to monitor commands from user
+    command_lock = ReentrantLock()
+    command_channel = Channel{String}() do ch
+        loop_is_active = true
+        while loop_is_active
+            lock(command_lock)
+            unlock(command_lock)
+            print("Command: ")
+            command = readline()
+            if command == "exit" || command == "quit"
+                put!(ch, "exit")
+                loop_is_active = false
+                continue
+            end
+            if command != ""
+                put!(ch, command)
+            end
+        end
+    end
 
+    # Animation loop
+    loop_is_active = true
+    while loop_is_active
+        loop_start_time = time()
 
-    # # Initialize plot
-    # fig = PyPlot.figure()
-    # ax = PyPlot.axes()
-    # PyPlot.axis("off")
+        if !plotter.is_paused
 
-    # function plot_frame()
+            # Perform partitioner steps
+            num_steps = steps_per_frame()
+            for _ in 1:num_steps
+                Gerrymander.step!(plotter.partitioner)
+            end
+            step_end_time = time()
 
-    #     # Compute partition shapes
-    #     partition_shapes = Geometry.make_partition_shapes(
-    #         plotter.county_boundaries,
-    #         plotter.partitioner.partition_to_counties,
-    #     )
+            # Update plot
+            update_plot()
+            plot_end_time = time()
 
-    #     # Reset plot
-    #     ax.clear()
+            # Update times
+            step_time *= (1 - time_decay)
+            step_time += time_decay * (step_end_time - loop_start_time) / num_steps
+            plot_time *= (1 - time_decay)
+            plot_time += time_decay * (plot_end_time - step_end_time)
 
-    #     # Plot partitions
-    #     for partition_id in plotter.partition_ids
-    #         color = pick_color(partition_id)
-    #         @inbounds for polygon in partition_shapes[partition_id]
-    #             @inbounds for (x, y) in polygon
-    #                 ax.fill(x, y, color=color)
-    #                 ax.plot(x, y, "k-", linewidth=1)
-    #             end
-    #         end
-    #     end
+        end
 
-    #     # Plot county boundaries
-    #     @inbounds for (x, y) in plotter.boundary_lines
-    #         ax.plot(x, y, "k-", linewidth=0.25)
-    #     end
+        # Process user commands
+        if !isopen(command_channel)
+            loop_is_active = false
+        elseif isready(command_channel)
+            lock(command_lock)
+            command = take!(command_channel)
+            if command == "exit"
+                println("Exiting...")
+                loop_is_active = false
+            else
+                parse_command(command)
+            end
+            unlock(command_lock)
+        end
+        if !loop_is_active
+            break
+        end
 
-    #     # Plot options
-    #     PyPlot.axis("off")
-    #     PyPlot.axis("tight")
-    #     PyPlot.axis("equal")
+        # Sleep to achieve desired frame rate
+        sleep_start_time = time()
+        sleep_time = plotter.frame_time - (sleep_start_time - loop_start_time)
+        if sleep_time > 0
+            sleep(sleep_time)
+        end
 
-    # end
-
-    # # State for frame updates
-    # anim_lock = ReentrantLock()
-    # steps_per_frame::Int = 1
-    # step_time::Float64 = frame_interval
-    # plot_time::Float64 = frame_interval
-    # running_mean_decay = 0.5
-
-    # "Update animation frame"
-    # function update_frame(frame::Int)::Nothing
-
-    #     # Skip frame if paused
-    #     if plotter.is_paused
-    #         return
-    #     end
-
-    #     # Skip frame if mutex is locked
-    #     if !trylock(anim_lock)
-    #         return
-    #     end
-
-    #     # Work around strange segfaults from PyCall
-    #     Base.GC.enable(false)
-
-    #     # Perform partitioner steps
-    #     step_start_time = time()
-    #     for i in 1:steps_per_frame
-    #         Gerrymander.step!(plotter.partitioner)
-    #     end
-    #     step_end_time = time()
-
-    #     # Plot partitioner state
-    #     plot_frame()
-    #     plot_end_time = time()
-
-    #     # Update running averages for run times
-    #     step_time *= (1 - running_mean_decay)
-    #     step_time += (
-    #         running_mean_decay * 1e3 * (step_end_time - step_start_time)
-    #         / steps_per_frame
-    #     )
-    #     plot_time *= (1 - running_mean_decay)
-    #     plot_time += (
-    #         running_mean_decay * 1e3 * (plot_end_time - step_end_time)
-    #     )
-
-    #     # Update number of steps per frame
-    #     steps_per_frame = floor(
-    #         Int,
-    #         (frame_interval * 0.8 - plot_time) / step_time,
-    #     )
-    #     steps_per_frame = max(steps_per_frame, 1)
-
-    #     # Clean up
-    #     Base.GC.enable(true)
-    #     unlock(anim_lock)
-
-    # end
-
-    # # Start animation
-    # anim = animation.FuncAnimation(
-    #     fig,
-    #     update_frame,
-    #     init_func=plot_frame,
-    #     interval=frame_interval,
-    #     cache_frame_data=false,
-    # )
-
-    # "Logic for key presses"
-    # function on_key(event)::Nothing
-
-    #     # Lock mutex to avoid interfering with animation
-    #     lock(anim_lock)
-
-    #     # Work around strange segfaults from PyCall
-    #     Base.GC.enable(false)
-
-    #     # Basic key press logic
-    #     if event.key == "escape"
-    #         exit()
-    #     end
-    #     if event.key == "p"
-    #         plotter.is_paused = !plotter.is_paused
-    #     end
-
-    #     # Partitioner key press logic
-    #     if hasfield(typeof(plotter.partitioner), :on_key_func)
-    #         plotter.partitioner.on_key_func(event)
-    #     end
-
-    #     # Clean up
-    #     Base.GC.enable(true)
-    #     unlock(anim_lock)
-
-    # end
-
-    # # Register logic for key presses
-    # fig.canvas.mpl_connect("key_press_event", on_key)
-
-    # # Start animation
-    # PyPlot.show()
+    end
 
 end
 
