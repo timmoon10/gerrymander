@@ -25,6 +25,14 @@ mutable struct Partitioner
     partition_populations::Dict{UInt, UInt}
     swap_candidates::Dict{UInt, Dict{UInt, Float64}}
 
+    # Log-interpolation of partitioner options
+    interp_step::UInt
+    interp_max_step::UInt
+    interp_log_temperature_start::Float64
+    interp_log_temperature_end::Float64
+    interp_log_population_weight_start::Float64
+    interp_log_population_weight_end::Float64
+
     # Function to parse user commands
     parse_command_func::Union{Function, Nothing}
 
@@ -83,6 +91,12 @@ mutable struct Partitioner
             partition_to_counties,
             partition_populations,
             swaps_candidates,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
             nothing,
         )
 
@@ -114,11 +128,16 @@ function _make_parse_command_func(partitioner::Partitioner)::Function
             println("exit: exit")
             println("pause: pause animation")
             println("info: partitioner state")
+            println("reset: reset partitioner properties")
+            println("interp: start/stop property interpolation")
             println()
             println("Properties")
             println("----------")
             println("temperature")
             println("population weight")
+            println("interp steps")
+            println("interp temperature")
+            println("interp population weight")
             println()
             return
         end
@@ -135,6 +154,20 @@ function _make_parse_command_func(partitioner::Partitioner)::Function
         if command == "reset"
             partitioner.temperature = 1.0
             partitioner.population_weight= 1.0
+            partitioner.interp_step = 0
+            partitioner.interp_max_step = 0
+            partitioner.interp_log_temperature_end = 0
+            partitioner.interp_log_population_weight_end = 0
+            return
+        end
+
+        # Start/stop property interpolation
+        if command == "interp"
+            if partitioner.interp_step == 0
+                start_interp!(partitioner)
+            else
+                partitioner.interp_step = 0
+            end
             return
         end
 
@@ -148,6 +181,28 @@ function _make_parse_command_func(partitioner::Partitioner)::Function
         end
         if name == "population weight"
             partitioner.population_weight = parse(Float64, value)
+            return
+        end
+        if name == "interp steps"
+            partitioner.interp_max_step = parse(UInt, value)
+            return
+        end
+        if name == "interp temperature"
+            value = parse(Float64, value)
+            if value <= 0
+                println("Invalid interp temperature: ", value)
+            else
+                partitioner.interp_log_temperature_end = log(value)
+            end
+            return
+        end
+        if name == "interp population weight"
+            value = parse(Float64, value)
+            if value <= 0
+                println("Invalid interp population weight: ", value)
+            else
+                partitioner.interp_log_population_weight_end = log(value)
+            end
             return
         end
 
@@ -167,6 +222,14 @@ function print_info(partitioner::Partitioner)
     println("----------------------")
     println("Temperature: ", partitioner.temperature)
     println("Population weight: ", partitioner.population_weight)
+    print("\n")
+
+    # Print interpolation state
+    println("Interpolation state")
+    println("-------------------")
+    println("Step: ", partitioner.interp_step, " / ", partitioner.interp_max_step)
+    println("Target temperature: ", exp(partitioner.interp_log_temperature_end))
+    println("Target population weight: ", exp(partitioner.interp_log_population_weight_end))
     print("\n")
 
     # Print partition populations
@@ -199,6 +262,65 @@ function print_info(partitioner::Partitioner)
 
 end
 
+function start_interp!(partitioner::Partitioner)
+
+    # Set interpolation start points
+    if partitioner.temperature <= 0
+        partitioner.temperature = exp(partitioner.interp_log_temperature_end)
+    end
+    partitioner.interp_log_temperature_start = log(partitioner.temperature)
+    if partitioner.population_weight <= 0
+        partitioner.population_weight = exp(partitioner.interp_log_population_weight_end)
+    end
+    partitioner.interp_log_population_weight_start = log(partitioner.population_weight)
+
+    # Interpolation step 1
+    partitioner.interp_step = 1
+
+end
+
+function interp_step!(partitioner::Partitioner)
+
+    # Trivial cases
+    step = partitioner.interp_step
+    max_step = partitioner.interp_max_step
+    if step == 0
+        # Interpolation is not active
+        return
+    elseif step >= max_step
+        # Interpolation has finished
+        partitioner.temperature = exp(partitioner.interp_log_temperature_end)
+        partitioner.population_weight = exp(partitioner.interp_log_population_weight_end)
+        partitioner.interp_step = 0
+        return
+    end
+
+    "Log scale interpolation"
+    function log_interp(
+        start_log_val::Float64,
+        end_log_val::Float64,
+        frac::Float64
+        )::Float64
+        log_val = (end_log_val - start_log_val) * frac + start_log_val
+        return exp(log_val)
+    end
+
+    # Update partitioner with interpolated properties
+    frac = Float64(step - 1) / (max_step - 1)
+    partitioner.temperature = log_interp(
+        partitioner.interp_log_temperature_start,
+        partitioner.interp_log_temperature_end,
+        frac,
+    )
+    partitioner.population_weight = log_interp(
+        partitioner.interp_log_population_weight_start,
+        partitioner.interp_log_population_weight_end,
+        frac,
+    )
+    partitioner.interp_step += 1
+
+end
+
 function update_county_swap_candidates!(
     partitioner::Partitioner,
     county_id::UInt,
@@ -211,7 +333,7 @@ function update_county_swap_candidates!(
     # Get partitions adjacent to county
     partition_id = partitioner.county_to_partition[county_id]
     neighbor_partitions = Set{UInt}([partition_id])
-    for (neighbor_id, _) in partitioner.adjacency_graph[county_id]
+    for neighbor_id in keys(partitioner.adjacency_graph[county_id])
         push!(
             neighbor_partitions,
             partitioner.county_to_partition[neighbor_id],
@@ -254,12 +376,15 @@ function can_swap_county(
     dst_partition_id = partition_id
 
     # Get neighboring counties
-    neighbors = keys(partitioner.adjacency_graph[county_id])
+    neighbors = collect(keys(partitioner.adjacency_graph[county_id]))
     src_neighbors = Set{UInt}()
     dst_neighbors = Set{UInt}()
     sizehint!(src_neighbors, length(neighbors))
     sizehint!(dst_neighbors, length(neighbors))
     for neighbor_id in neighbors
+        if neighbor_id == county_id
+            continue
+        end
         neighbor_partition_id = partitioner.county_to_partition[neighbor_id]
         if neighbor_partition_id == src_partition_id
             push!(src_neighbors, neighbor_id)
@@ -345,13 +470,17 @@ function swap_county!(
     for neighbor in keys(partitioner.interaction_graph[county_id])
         push!(neighborhood, neighbor)
     end
-    @Base.Threads.threads for county_id in collect(neighborhood)
+    neighborhood = collect(neighborhood)
+    @Base.Threads.threads for county_id in neighborhood
         update_county_swap_candidates!(partitioner, county_id)
     end
 
 end
 
 function step!(partitioner::Partitioner)
+
+    # Update interpolation state
+    interp_step!(partitioner)
 
     # Return immediately if there are no candidate swaps
     num_swap_candidates::Int = 0
