@@ -582,7 +582,7 @@ function step!(partitioner::Partitioner)
 
         # Check which swaps are valid
         swap_is_valid = Vector{Bool}(undef, num_swap_candidates)
-        @Base.Threads.threads for i in 1:num_swap_candidates
+        for i in 1:num_swap_candidates
             (county_id, partition_id) = swaps[i]
             swap_is_valid[i] = can_swap_county(partitioner, county_id, partition_id)
         end

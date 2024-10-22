@@ -9,8 +9,8 @@ function main()
     state_ids = [state_id]
 
     # Partitioner
-    num_partitions::UInt = 4
-    personal_stdev::Float64 = 100.0
+    num_partitions::UInt = 6
+    personal_stdev::Float64 = 50.0
     max_distance::Float64 = 300.0
     partitioner = Gerrymander.SimulatedAnnealing.Partitioner(
         num_partitions,
