@@ -9,15 +9,23 @@ import ..DataGraphs
 import ..Graph
 
 mutable struct Partitioner
+
+    # Partitioner options
     temperature::Float64
     population_weight::Float64
+
+    # County data
     adjacency_graph::Graph.WeightedGraph
     interaction_graph::Graph.WeightedGraph
+    county_populations::Dict{UInt, UInt}
+
+    # Partition data
     county_to_partition::Dict{UInt, UInt}
     partition_to_counties::Dict{UInt, Set{UInt}}
-    county_populations::Dict{UInt, UInt}
     partition_populations::Dict{UInt, UInt}
     swap_candidates::Dict{UInt, Dict{UInt, Float64}}
+
+    # Function to parse user commands
     parse_command_func::Union{Function, Nothing}
 
     function Partitioner(
@@ -70,9 +78,9 @@ mutable struct Partitioner
             population_weight,
             adjacency_graph,
             interaction_graph,
+            county_populations,
             county_to_partition,
             partition_to_counties,
-            county_populations,
             partition_populations,
             swaps_candidates,
             nothing,
@@ -120,6 +128,13 @@ function _make_parse_command_func(partitioner::Partitioner)::Function
             println()
             print_info(partitioner)
             println()
+            return
+        end
+
+        # Reset partitioner
+        if command == "reset"
+            partitioner.temperature = 1.0
+            partitioner.population_weight= 1.0
             return
         end
 
@@ -403,21 +418,76 @@ function step!(partitioner::Partitioner)
     end
 
     # Convert scores to cumulative softmax sum
-    scores[1] = exp(scores[1] - max_score)
-    @inbounds for i in 2:length(scores)
-        @inbounds scores[i] = exp(scores[i] - max_score) + scores[i-1]
+    function cum_softmax_numers(
+        scores::Vector{Float64},
+        max_score::Float64,
+        )::Vector{Float64}
+        out = Vector{Float64}()
+        sizehint!(out, length(scores))
+        last_p::Float64 = 0
+        @inbounds for (i, score) in enumerate(scores)
+            p = exp(score - max_score) + last_p
+            push!(out, p)
+            last_p = p
+        end
+        return out
     end
-    prob_denom = scores[end]
+    cum_prob_numers = cum_softmax_numers(scores, max_score)
+    prob_denom = cum_prob_numers[end]
 
-    # Pick county to swap and perform swap
-    for _ in 1:20
+    # Try performing swap with randomly chosen county
+    need_swap = true
+    for _ in 1:10
         rand = Random.rand(Float64)
-        i = Base.Sort.searchsortedfirst(scores, rand * prob_denom)
+        i = Base.Sort.searchsortedfirst(cum_prob_numers, rand * prob_denom)
         (county_id, partition_id) = swaps[i]
         if can_swap_county(partitioner, county_id, partition_id)
             swap_county!(partitioner, county_id, partition_id)
+            need_swap = false
             break
         end
+    end
+
+    # Filter invalid swaps if we pick them too many times
+    if need_swap
+
+        # Check which swaps are valid
+        swap_is_valid = Vector{Bool}(undef, num_swap_candidates)
+        @Base.Threads.threads for i in 1:num_swap_candidates
+            (county_id, partition_id) = swaps[i]
+            swap_is_valid[i] = can_swap_county(partitioner, county_id, partition_id)
+        end
+        num_valid_swaps = count(swap_is_valid)
+        if num_valid_swaps == 0
+            return
+        end
+
+        # Filter invalid swaps
+        max_score = -Inf
+        valid_swaps = Vector{Tuple{UInt, UInt}}()
+        valid_scores = Vector{Float64}()
+        sizehint!(valid_swaps, num_valid_swaps)
+        sizehint!(valid_scores, num_valid_swaps)
+        for i in 1:num_valid_swaps
+            if !swap_is_valid[i]
+                continue
+            end
+            push!(valid_swaps, swaps[i])
+            push!(valid_scores, scores[i])
+            max_score = max(scores[i], max_score)
+        end
+
+        # Convert scores to cumulative softmax sum
+        cum_prob_numers = cum_softmax_numers(valid_scores, max_score)
+        prob_denom = cum_prob_numers[end]
+
+        # Randomly pick county and perform swap
+        rand = Random.rand(Float64)
+        i = Base.Sort.searchsortedfirst(cum_prob_numers, rand * prob_denom)
+        (county_id, partition_id) = valid_swaps[i]
+        swap_county!(partitioner, county_id, partition_id)
+        need_swap = false
+
     end
 
 end

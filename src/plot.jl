@@ -191,6 +191,8 @@ function animate!(plotter::Plotter)
             println("Frame time: ", plotter.frame_time * 1e3, " ms")
             println("Steps per frame: ", steps_per_frame())
             println()
+        elseif command == "reset plot" || command == "reset anim"
+            update_plot()
         elseif hasfield(typeof(plotter.partitioner), :parse_command_func)
             plotter.partitioner.parse_command_func(command)
         else
@@ -272,6 +274,9 @@ function animate!(plotter::Plotter)
         end
 
     end
+
+    # Clean up
+    GLMakie.closeall()
 
 end
 
