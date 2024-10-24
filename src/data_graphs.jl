@@ -114,6 +114,25 @@ function county_interaction_graph(
     graph = Dict{UInt, Dict{UInt, Float64}}(
         id => Dict{UInt, Float64}() for id in county_ids)
 
+    # Graph edge weight
+    interaction_score = let personal_stdev = personal_stdev
+        personal_var = personal_stdev ^ 2
+        function interaction_score(
+            dist_sq::Float64,
+            var1::Float64,
+            var2::Float64,
+            pop1::Float64,
+            pop2::Float64,
+            )::Float64
+            interaction_var = var1 + var2 + 2 * personal_var
+            unit_interaction = (
+                exp(-0.5 * dist_sq / interaction_var)
+                / (2 * pi * sqrt(interaction_var))
+            )
+            return pop1 * pop2 * unit_interaction
+        end
+    end
+
     # Binned cache of county data
     CountyData = Tuple{UInt, Float64, Float64, Float64, Float64, Float64}
     binned_county_data = DataStructures.DefaultDict{
@@ -122,7 +141,6 @@ function county_interaction_graph(
     }(Set{CountyData})
 
     # Iterate through counties
-    personal_var = personal_stdev ^ 2
     max_distance_sq = max_distance ^2
     @inbounds for row in 1:size(county_data, 1)
 
@@ -133,6 +151,9 @@ function county_interaction_graph(
         @inbounds y1::Float64 = county_data[row, 4]
         @inbounds z1::Float64 = county_data[row, 5]
         @inbounds var1::Float64 = county_data[row, 6]
+
+        # Self interaction
+        graph[id1][id1] = 2 * interaction_score(0.0, var1, var1, pop1, pop1)
 
         # Current bin
         bin = (
@@ -152,18 +173,13 @@ function county_interaction_graph(
             end
             for (id2, pop2, x2, y2, z2, var2) in binned_county_data[bin]
                 # Compute edge weight between counties
-                dist2 = (x2 - x1)^2 + (y2 - y1)^2 + (z2 - z1)^2
-                if dist2 > max_distance_sq
+                dist_sq = (x2 - x1)^2 + (y2 - y1)^2 + (z2 - z1)^2
+                if dist_sq > max_distance_sq
                     continue
                 end
-                interaction_var = var1 + var2 + 2 * personal_var
-                unit_interaction = (
-                    exp(-0.5 * dist2 / interaction_var)
-                    / (2 * pi * sqrt(interaction_var))
-                )
-                interaction_score = pop1 * pop2 * unit_interaction
-                graph[id1][id2] = interaction_score
-                graph[id2][id1] = interaction_score
+                weight = interaction_score(dist_sq, var1, var2, pop1, pop2)
+                graph[id1][id2] = weight
+                graph[id2][id1] = weight
             end
         end
 

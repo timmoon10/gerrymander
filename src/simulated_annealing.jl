@@ -294,7 +294,7 @@ function print_info(partitioner::Partitioner)
         partition_counties = partitioner.partition_to_counties[partition_id]
         for county_id in partition_counties
             for (neighbor_id, affinity) in partitioner.interaction_graph[county_id]
-                if neighbor_id != county_id && in(neighbor_id, partition_counties)
+                if in(neighbor_id, partition_counties)
                     partition_affinity += affinity
                 end
 
