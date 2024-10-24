@@ -41,8 +41,6 @@ mutable struct Partitioner
         state_ids::AbstractVector{UInt},
         interaction_personal_stdev::Float64,
         interaction_max_distance::Float64;
-        temperature::Float64 = 1.0,
-        population_weight::Float64 = 1.0,
         )::Partitioner
 
         # Data graphs
@@ -55,42 +53,28 @@ mutable struct Partitioner
 
         # County data
         county_population_data = DataFiles.load_county_populations(state_ids)
-        num_counties = size(county_population_data, 1)
         county_ids = Vector{UInt}(county_population_data[:, 1])
         county_populations = Dict{UInt, UInt}(
             county_ids[i] => county_population_data[i, 2]
-            for i in 1:num_counties)
+            for i in 1:size(county_population_data, 1))
 
         # Initial partition
         (county_to_partition, partition_to_counties) = Graph.random_partition(
             num_partitions,
             adjacency_graph,
         )
-        partition_populations = Dict{UInt, UInt}()
-        sizehint!(partition_populations, Int(num_partitions))
-        for (partition_id, counties) in partition_to_counties
-            pop::UInt = 0
-            for county_id in counties
-                pop += county_populations[county_id]
-            end
-            partition_populations[partition_id] = pop
-        end
-
-        # Candidate county swaps
-        swaps_candidates = Dict{UInt, Dict{UInt, Float64}}(
-            id => Dict{UInt, Float64}() for id in county_ids)
 
         # Construct partitioner object
         partitioner = new(
-            temperature,
-            population_weight,
+            1.0,
+            1.0,
             adjacency_graph,
             interaction_graph,
             county_populations,
             county_to_partition,
             partition_to_counties,
-            partition_populations,
-            swaps_candidates,
+            Dict{UInt, UInt}(),
+            Dict{UInt, Dict{UInt, Float64}}(),
             0,
             0,
             0,
@@ -100,16 +84,80 @@ mutable struct Partitioner
             nothing,
         )
 
+        # Reset partitioner data
+        reset!(partitioner)
+
         # Register logic for user commands
         partitioner.parse_command_func = _make_parse_command_func(partitioner)
 
-        # Find swap candidates
-        @Base.Threads.threads for county_id in county_ids
-            update_county_swap_candidates!(partitioner, county_id)
-        end
-
         return partitioner
 
+    end
+
+end
+
+function reset!(partitioner::Partitioner)
+
+    # Reset simple fields
+    partitioner.temperature = 1.0
+    partitioner.population_weight= 1.0
+    partitioner.interp_step = 0
+    partitioner.interp_max_step = 0
+    partitioner.interp_log_temperature_end = 0
+    partitioner.interp_log_population_weight_end = 0
+
+    # Get counties and partitions
+    county_to_partition = partitioner.county_to_partition
+    county_ids = Vector{UInt}()
+    sizehint!(county_ids, length(county_to_partition))
+    partition_ids = Set{UInt}()
+    for (county_id, partition_id) in county_to_partition
+        push!(county_ids, county_id)
+        push!(partition_ids, partition_id)
+    end
+
+    # Make sure partition data is consistent
+    partition_to_counties = partitioner.partition_to_counties
+    empty!(partition_to_counties)
+    sizehint!(partition_to_counties, length(partition_ids))
+    for partition_id in partition_ids
+        partition_to_counties[partition_id] = Set{UInt}()
+    end
+    for (county_id, partition_id) in county_to_partition
+        push!(partition_to_counties[partition_id], county_id)
+    end
+
+    # Make sure partitions are contiguous
+    partition_centers = Dict{UInt, UInt}(
+        id => first(partition_to_counties[id]) for id in partition_ids)
+    Graph.make_partition_contiguous!(
+        county_to_partition,
+        partition_to_counties,
+        partition_centers,
+        partitioner.adjacency_graph,
+    )
+
+    # Compute partition populations
+    partition_populations = partitioner.partition_populations
+    county_populations = partitioner.county_populations
+    empty!(partition_populations)
+    sizehint!(partition_populations, length(partition_ids))
+    for partition_id in partition_ids
+        partition_populations[partition_id] = 0
+    end
+    for (county_id, partition_id) in county_to_partition
+        partition_populations[partition_id] += county_populations[county_id]
+    end
+
+    # Compute swap candidates
+    swap_candidates = partitioner.swap_candidates
+    empty!(swap_candidates)
+    sizehint!(swap_candidates, length(county_ids))
+    for county_id in county_ids
+        swap_candidates[county_id] = Dict{UInt, Float64}()
+    end
+    @Base.Threads.threads for county_id in county_ids
+        update_county_swap_candidates!(partitioner, county_id)
     end
 
 end
@@ -152,12 +200,7 @@ function _make_parse_command_func(partitioner::Partitioner)::Function
 
         # Reset partitioner
         if command == "reset"
-            partitioner.temperature = 1.0
-            partitioner.population_weight= 1.0
-            partitioner.interp_step = 0
-            partitioner.interp_max_step = 0
-            partitioner.interp_log_temperature_end = 0
-            partitioner.interp_log_population_weight_end = 0
+            reset!(partitioner)
             return
         end
 
@@ -528,6 +571,7 @@ function step!(partitioner::Partitioner)
             sum_affinity_sq += affinity * affinity
         end
     end
+    num_swap_candidates = length(swaps)
     mean_affinity = sum_affinity / num_swap_candidates
     mean_affinity_sq = sum_affinity_sq / num_swap_candidates
     var_affinity = mean_affinity_sq - mean_affinity * mean_affinity
@@ -581,8 +625,8 @@ function step!(partitioner::Partitioner)
     if need_swap
 
         # Check which swaps are valid
-        swap_is_valid = Vector{Bool}(undef, num_swap_candidates)
-        for i in 1:num_swap_candidates
+        swap_is_valid = zeros(Bool, num_swap_candidates)
+        @Base.Threads.threads for i in 1:num_swap_candidates
             (county_id, partition_id) = swaps[i]
             swap_is_valid[i] = can_swap_county(partitioner, county_id, partition_id)
         end
