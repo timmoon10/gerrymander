@@ -590,10 +590,14 @@ function step!(partitioner::Partitioner)
     # Compute swap scores
     max_score = -Inf
     @inbounds for i in 1:num_swap_candidates
-        (county_id, partition_id) = swaps[i]
+        @inbounds (county_id, dst_partition_id) = swaps[i]
+        src_partition_id = partitioner.county_to_partition[county_id]
         @inbounds affinity = scores[i]
         affinity_zscore = (affinity - mean_affinity) / stdev_affinity
-        population_score = population_scores[partition_id]
+        population_score = (
+            population_scores[dst_partition_id]
+            - population_scores[src_partition_id]
+        )
         score = (affinity_zscore + population_score) / partitioner.temperature
         max_score = max(score, max_score)
         @inbounds scores[i] = score
