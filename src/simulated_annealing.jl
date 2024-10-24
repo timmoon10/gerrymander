@@ -534,73 +534,86 @@ function step!(partitioner::Partitioner)
     # Update interpolation state
     interp_step!(partitioner)
 
-    # Return immediately if there are no candidate swaps
+    # Number of candidate swaps
     num_swap_candidates::Int = 0
     for county_swaps in values(partitioner.swap_candidates)
         num_swap_candidates += length(county_swaps)
     end
+
+    # Flatten candidate swaps and compute sums
+    swaps = Vector{Tuple{UInt, UInt}}()
+    affinities = Vector{Float64}()
+    pop_diffs = Vector{Float64}()
+    sizehint!(swaps, num_swap_candidates)
+    sizehint!(affinities, num_swap_candidates)
+    sizehint!(pop_diffs, num_swap_candidates)
+    sum_affinity::Float64 = 0
+    sum_affinity_sq::Float64 = 0
+    sum_pop_diff::Float64 = 0
+    sum_pop_diff_sq::Float64 = 0
+    for (county_id, county_swaps) in partitioner.swap_candidates
+        for (dst_partition, affinity) in county_swaps
+            src_partition = partitioner.county_to_partition[county_id]
+            pop_diff = (
+                partitioner.partition_populations[src_partition]
+                - partitioner.partition_populations[dst_partition]
+            )
+            push!(swaps, (county_id, dst_partition))
+            push!(affinities, affinity)
+            push!(pop_diffs, pop_diff)
+            sum_affinity += affinity
+            sum_affinity_sq += affinity * affinity
+            sum_pop_diff += pop_diff
+            sum_pop_diff_sq += pop_diff * pop_diff
+        end
+    end
+    num_swap_candidates = length(swaps)
     if num_swap_candidates == 0
         return
     end
 
-    # Compute population statistics
-    total_population::UInt = 0
-    sum_population_sq::Float64 = 0
-    for pop in values(partitioner.partition_populations)
-        total_population += pop
-        pop_float::Float64 = pop
-        sum_population_sq += pop_float * pop_float
+    # Compute statistics
+    function compute_statistics(
+        sum::Float64,
+        sum_sq::Float64,
+        count::Int,
+        )::Tuple{Float64, Float64}
+        mean = sum / count
+        mean_sq = sum_sq / count
+        var = mean_sq - mean * mean
+        var = max(var, 1e-12)
+        stdev = sqrt(var)
+        return (mean, stdev)
     end
-    num_partitions = length(partitioner.partition_populations)
-    mean_population = Float64(total_population) / num_partitions
-    mean_population_sq = sum_population_sq / num_partitions
-    var_population = mean_population_sq - mean_population * mean_population
-    var_population = max(var_population, 1)
-    stdev_population = sqrt(var_population)
-
-    # Population scores
-    population_scores = Dict{UInt, Float64}()
-    for (partition_id, pop) in partitioner.partition_populations
-        pop_zscore = (pop - mean_population) / stdev_population
-        population_scores[partition_id] = -partitioner.population_weight * pop_zscore
+    function zscore(val::Float64, stats::Tuple{Float64, Float64})::Float64
+        (mean, stdev) = stats
+        return (val - mean) / stdev
     end
+    affinity_stats = compute_statistics(
+        sum_affinity,
+        sum_affinity_sq,
+        num_swap_candidates,
+    )
+    pop_diff_stats = compute_statistics(
+        sum_pop_diff,
+        sum_pop_diff_sq,
+        num_swap_candidates,
+    )
 
-    # Flatten candidate swaps and compute affinity statistics
-    swaps = Vector{Tuple{UInt, UInt}}()
+    # Compute scores
     scores = Vector{Float64}()
-    sizehint!(swaps, num_swap_candidates)
     sizehint!(scores, num_swap_candidates)
-    sum_affinity::Float64 = 0
-    sum_affinity_sq::Float64 = 0
-    for (county_id, county_swaps) in partitioner.swap_candidates
-        for (partition_id, affinity) in county_swaps
-            push!(swaps, (county_id, partition_id))
-            push!(scores, affinity)
-            sum_affinity += affinity
-            sum_affinity_sq += affinity * affinity
-        end
-    end
-    num_swap_candidates = length(swaps)
-    mean_affinity = sum_affinity / num_swap_candidates
-    mean_affinity_sq = sum_affinity_sq / num_swap_candidates
-    var_affinity = mean_affinity_sq - mean_affinity * mean_affinity
-    var_affinity = max(var_affinity, 1e-12)
-    stdev_affinity = sqrt(var_affinity)
-
-    # Compute swap scores
     max_score = -Inf
     @inbounds for i in 1:num_swap_candidates
-        @inbounds (county_id, dst_partition_id) = swaps[i]
-        src_partition_id = partitioner.county_to_partition[county_id]
-        @inbounds affinity = scores[i]
-        affinity_zscore = (affinity - mean_affinity) / stdev_affinity
-        population_score = (
-            population_scores[dst_partition_id]
-            - population_scores[src_partition_id]
+        @inbounds affinity = affinities[i]
+        @inbounds pop_diff = pop_diffs[i]
+        score = (
+            zscore(affinity, affinity_stats)
+            + partitioner.population_weight * zscore(pop_diff, pop_diff_stats)
         )
-        score = (affinity_zscore + population_score) / partitioner.temperature
+        score /= partitioner.temperature
         max_score = max(score, max_score)
-        @inbounds scores[i] = score
+        push!(scores, score)
     end
 
     # Convert scores to cumulative softmax sum
@@ -649,11 +662,11 @@ function step!(partitioner::Partitioner)
         end
 
         # Filter invalid swaps
-        max_score = -Inf
         valid_swaps = Vector{Tuple{UInt, UInt}}()
         valid_scores = Vector{Float64}()
         sizehint!(valid_swaps, num_valid_swaps)
         sizehint!(valid_scores, num_valid_swaps)
+        max_score = -Inf
         for i in 1:num_valid_swaps
             if !swap_is_valid[i]
                 continue
