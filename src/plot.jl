@@ -195,6 +195,7 @@ function animate!(plotter::Plotter)
             update_plot()
         elseif hasfield(typeof(plotter.partitioner), :parse_command_func)
             plotter.partitioner.parse_command_func(command)
+            update_plot()
         else
             println("Unrecognized command: ", command)
         end

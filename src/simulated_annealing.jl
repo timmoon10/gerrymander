@@ -2,6 +2,7 @@ module SimulatedAnnealing
 
 import Base.Threads
 import DataStructures
+import DelimitedFiles
 import Random
 
 import ..DataFiles
@@ -85,7 +86,7 @@ mutable struct Partitioner
         )
 
         # Reset partitioner data
-        reset!(partitioner)
+        reset_partitions!(partitioner)
 
         # Register logic for user commands
         partitioner.parse_command_func = _make_parse_command_func(partitioner)
@@ -96,15 +97,7 @@ mutable struct Partitioner
 
 end
 
-function reset!(partitioner::Partitioner)
-
-    # Reset simple fields
-    partitioner.temperature = 1.0
-    partitioner.population_weight= 1.0
-    partitioner.interp_step = 0
-    partitioner.interp_max_step = 0
-    partitioner.interp_log_temperature_end = 0
-    partitioner.interp_log_population_weight_end = 0
+function reset_partitions!(partitioner::Partitioner)
 
     # Get counties and partitions
     county_to_partition = partitioner.county_to_partition
@@ -178,6 +171,8 @@ function _make_parse_command_func(partitioner::Partitioner)::Function
             println("info: partitioner state")
             println("reset: reset partitioner properties")
             println("interp: start/stop property interpolation")
+            println("save: save partitions to file")
+            println("load: load partitions from file")
             println()
             println("Properties")
             println("----------")
@@ -200,7 +195,13 @@ function _make_parse_command_func(partitioner::Partitioner)::Function
 
         # Reset partitioner
         if command == "reset"
-            reset!(partitioner)
+            partitioner.temperature = 1.0
+            partitioner.population_weight= 1.0
+            partitioner.interp_step = 0
+            partitioner.interp_max_step = 0
+            partitioner.interp_log_temperature_end = 0
+            partitioner.interp_log_population_weight_end = 0
+            reset_partitions!(partitioner)
             return
         end
 
@@ -214,7 +215,7 @@ function _make_parse_command_func(partitioner::Partitioner)::Function
             return
         end
 
-        # Partitioner properties
+        # Parametrized commands
         command_split = split(command, "=", limit=2)
         name = strip(command_split[1])
         value = length(command_split) > 1 ? strip(command_split[2]) : ""
@@ -246,6 +247,14 @@ function _make_parse_command_func(partitioner::Partitioner)::Function
             else
                 partitioner.interp_log_population_weight_end = log(value)
             end
+            return
+        end
+        if name == "save"
+            save_partition(partitioner, String(value))
+            return
+        end
+        if name == "load"
+            load_partition!(partitioner, String(value))
             return
         end
 
@@ -626,7 +635,7 @@ function step!(partitioner::Partitioner)
 
         # Check which swaps are valid
         swap_is_valid = zeros(Bool, num_swap_candidates)
-        @Base.Threads.threads for i in 1:num_swap_candidates
+        for i in 1:num_swap_candidates
             (county_id, partition_id) = swaps[i]
             swap_is_valid[i] = can_swap_county(partitioner, county_id, partition_id)
         end
@@ -663,6 +672,34 @@ function step!(partitioner::Partitioner)
 
     end
 
+end
+
+function save_partition(
+    partitioner::Partitioner,
+    file::String,
+    )
+    county_to_partition = partitioner.county_to_partition
+    county_ids = collect(keys(county_to_partition))
+    sort!(county_ids)
+    data = Array{UInt, 2}(undef, length(county_ids), 2)
+    for (i, county_id) in enumerate(county_ids)
+        data[i, 1] = county_id
+        data[i, 2] = county_to_partition[county_id]
+    end
+    DelimitedFiles.writedlm(file, data, ',')
+end
+
+function load_partition!(
+    partitioner::Partitioner,
+    file::String,
+    )
+    data = DelimitedFiles.readdlm(file, ',', UInt)
+    for i in 1:size(data, 1)
+        county_id = data[i, 1]
+        partition_id = data[i, 2]
+        partitioner.county_to_partition[county_id] = partition_id
+    end
+    reset_partitions!(partitioner)
 end
 
 end  # module SimulatedAnnealing
