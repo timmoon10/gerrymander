@@ -551,14 +551,13 @@ function step!(partitioner::Partitioner)
     sum_affinity_sq::Float64 = 0
     sum_pop_diff::Float64 = 0
     sum_pop_diff_sq::Float64 = 0
-    for (county_id, county_swaps) in partitioner.swap_candidates
+    for (county, county_swaps) in partitioner.swap_candidates
         for (dst_partition, affinity) in county_swaps
-            src_partition = partitioner.county_to_partition[county_id]
-            pop_diff = (
-                partitioner.partition_populations[src_partition]
-                - partitioner.partition_populations[dst_partition]
-            )
-            push!(swaps, (county_id, dst_partition))
+            src_partition = partitioner.county_to_partition[county]
+            dst_partition_pop = Float64(partitioner.partition_populations[dst_partition])
+            src_partition_pop = Float64(partitioner.partition_populations[src_partition])
+            pop_diff = src_partition_pop - dst_partition_pop
+            push!(swaps, (county, dst_partition))
             push!(affinities, affinity)
             push!(pop_diffs, pop_diff)
             sum_affinity += affinity
