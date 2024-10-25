@@ -158,7 +158,7 @@ end
 function _make_parse_command_func(partitioner::Partitioner)::Function
 
     "Logic for user commands"
-    function parse_command_func(command::String)
+    function parse_command_func(command::String, params::String)
 
         # Help message
         if command == "help"
@@ -215,46 +215,45 @@ function _make_parse_command_func(partitioner::Partitioner)::Function
             return
         end
 
-        # Parametrized commands
-        command_split = split(command, "=", limit=2)
-        name = strip(command_split[1])
-        value = length(command_split) > 1 ? strip(command_split[2]) : ""
-        if name == "temperature"
-            partitioner.temperature = parse(Float64, value)
+        # Properties
+        if command == "temperature"
+            partitioner.temperature = parse(Float64, params)
             return
         end
-        if name == "population weight"
-            partitioner.population_weight = parse(Float64, value)
+        if command == "population weight"
+            partitioner.population_weight = parse(Float64, params)
             return
         end
-        if name == "interp steps"
-            partitioner.interp_max_step = parse(UInt, value)
+        if command == "interp steps"
+            partitioner.interp_max_step = parse(UInt, params)
             return
         end
-        if name == "interp temperature"
-            value = parse(Float64, value)
-            if value <= 0
-                println("Invalid interp temperature: ", value)
+        if command == "interp temperature"
+            temperature = parse(Float64, params)
+            if params <= 0
+                println("Invalid interp temperature: ", temperature)
             else
-                partitioner.interp_log_temperature_end = log(value)
+                partitioner.interp_log_temperature_end = log(temperature)
             end
             return
         end
-        if name == "interp population weight"
-            value = parse(Float64, value)
-            if value <= 0
-                println("Invalid interp population weight: ", value)
+        if command == "interp population weight"
+            population_weight = parse(Float64, params)
+            if params <= 0
+                println("Invalid interp population weight: ", population_weight)
             else
-                partitioner.interp_log_population_weight_end = log(value)
+                partitioner.interp_log_population_weight_end = log(population_weight)
             end
             return
         end
-        if name == "save"
-            save_partition(partitioner, String(value))
+
+        # Save/load partitions
+        if command == "save"
+            save_partition(partitioner, String(params))
             return
         end
-        if name == "load"
-            load_partition!(partitioner, String(value))
+        if command == "load"
+            load_partition!(partitioner, String(params))
             return
         end
 

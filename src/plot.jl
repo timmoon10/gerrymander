@@ -1,5 +1,6 @@
 module Plot
 
+import Base.Threads
 import GLMakie
 import Memoize
 
@@ -173,8 +174,9 @@ function animate!(plotter::Plotter)
     # Initialize plot
     update_plot()
 
-    function parse_command(command::String)
-        if command == "pause" || command == "unpause"
+    function parse_command(command::String, params::String)
+        if command == ""
+        elseif command == "pause" || command == "unpause"
             if plotter.is_paused
                 println("Unpausing...")
             else
@@ -193,8 +195,11 @@ function animate!(plotter::Plotter)
             println()
         elseif command == "reset plot" || command == "reset anim"
             update_plot()
+        elseif command == "save image" || command == "save plot"
+            println("Saving image to $params")
+            GLMakie.save(params, fig, px_per_unit=8)
         elseif hasfield(typeof(plotter.partitioner), :parse_command_func)
-            plotter.partitioner.parse_command_func(command)
+            plotter.partitioner.parse_command_func(command, params)
             update_plot()
         else
             println("Unrecognized command: ", command)
@@ -202,30 +207,24 @@ function animate!(plotter::Plotter)
     end
 
     # Spawn thread to monitor commands from user
+    loop_is_active::Base.Threads.Atomic{Bool} = Base.Threads.Atomic{Bool}(true)
     command_lock = ReentrantLock()
     command_channel = Channel{String}() do ch
-        loop_is_active = true
-        while loop_is_active
-            lock(command_lock)
+        lock(command_lock)
+        while loop_is_active[]
             unlock(command_lock)
             print("Command: ")
-            for command in split(readline(), ";")
-                command = lowercase(strip(command))
-                if command == "exit" || command == "quit"
-                    put!(ch, "exit")
-                    loop_is_active = false
-                    break
-                end
-                if command != ""
-                    put!(ch, command)
-                end
+            commands = readline()
+            if strip(commands) != ""
+                put!(ch, commands)
             end
+            lock(command_lock)
         end
+        unlock(command_lock)
     end
 
     # Animation loop
-    loop_is_active = true
-    while loop_is_active
+    while loop_is_active[]
         loop_start_time = time()
 
         if !plotter.is_paused
@@ -251,19 +250,26 @@ function animate!(plotter::Plotter)
 
         # Process user commands
         if !isopen(command_channel)
-            loop_is_active = false
+            loop_is_active[] = false
         elseif isready(command_channel)
             lock(command_lock)
-            command = take!(command_channel)
-            if command == "exit"
-                println("Exiting...")
-                loop_is_active = false
-            else
-                parse_command(command)
+            commands = take!(command_channel)
+            for command in split(commands, ";")
+                command = lowercase(command)
+                command_split = split(command, "=", limit=2)
+                command = String(strip(command_split[1]))
+                params = length(command_split) > 1 ? String(strip(command_split[2])) : ""
+                if command == "exit"
+                    println("Exiting...")
+                    loop_is_active[] = false
+                    break
+                else
+                    parse_command(command, params)
+                end
             end
             unlock(command_lock)
         end
-        if !loop_is_active
+        if !loop_is_active[]
             break
         end
 
