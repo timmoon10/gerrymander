@@ -1,12 +1,31 @@
 include(joinpath(@__DIR__, "Gerrymander.jl"))
 
-function main()
+function main(args::Vector{String})
 
-    # State name
-    state_id::UInt = 6
-    state_name = Gerrymander.DataFiles.state_names()[state_id]
-    println("State ", state_id, " is ", state_name)
-    state_ids = [state_id]
+    # Get states from command-line arguments
+    state_ids = Set{UInt}()
+    state_names = Gerrymander.DataFiles.state_names()
+    if isempty(args)
+        push!(state_ids, 6)  # Default is California
+    elseif length(args) == 1 && args[1] == "all"
+        union!(state_ids, keys(state_names))
+    else
+        for arg in args
+            push!(state_ids, parse(UInt, arg))
+        end
+    end
+    state_ids = collect(state_ids)
+    sort!(state_ids)
+
+    # Print states
+    message = "States: "
+    for (i, state_id) in enumerate(state_ids)
+        if i > 1
+            message *= ", "
+        end
+        message *= state_names[state_id]
+    end
+    println(message)
 
     # Partitioner
     num_partitions::UInt = 6
@@ -27,4 +46,4 @@ function main()
 
 end
 
-main()
+main(ARGS)

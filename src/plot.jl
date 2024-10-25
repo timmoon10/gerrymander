@@ -33,10 +33,10 @@ mutable struct Plotter
     county_boundaries::Dict{UInt, Geometry.MultiPolygonCoords}
     boundary_lines::Vector{Geometry.PlotLine}
     frame_time::Float64  # sec
-    is_paused::Bool
 
     function Plotter(
-        partitioner::Any,
+        partitioner::Any;
+        frame_time::Float64 = 1.0,
         )::Plotter
 
         # Get lists of counties and partitions
@@ -64,8 +64,7 @@ mutable struct Plotter
             partition_ids,
             county_boundaries,
             boundary_lines,
-            0.125,
-            false,
+            frame_time,
         )
 
     end
@@ -128,9 +127,13 @@ function animate!(plotter::Plotter)
     step_time::Float64 = plotter.frame_time
     plot_time::Float64 = plotter.frame_time
     time_decay = 0.5
+    is_paused::Bool = true
+    display_is_paused::Bool = false
+    show_counties::Bool = false
 
     function steps_per_frame()::Int
-        num_steps = floor(Int, (plotter.frame_time - plot_time) / step_time)
+        frame_time = plotter.frame_time - (display_is_paused ? 0.0 : plot_time)
+        num_steps = floor(Int, frame_time / step_time)
         num_steps = max(num_steps, 1)
     end
 
@@ -162,8 +165,10 @@ function animate!(plotter::Plotter)
         end
 
         # Plot county boundaries
-        @inbounds for (x, y) in plotter.boundary_lines
-            GLMakie.lines!(x, y, color=:black, linewidth=0.25)
+        if show_counties
+            @inbounds for (x, y) in plotter.boundary_lines
+                GLMakie.lines!(x, y, color=:black, linewidth=0.25)
+            end
         end
 
         # Display plot
@@ -177,24 +182,29 @@ function animate!(plotter::Plotter)
     function parse_command(command::String, params::String)
         if command == ""
         elseif command == "pause" || command == "unpause"
-            if plotter.is_paused
+            if is_paused
                 println("Unpausing...")
             else
                 println("Pausing...")
             end
-            plotter.is_paused = !plotter.is_paused
+            is_paused = !is_paused
         elseif command == "anim info" || command == "frame info"
             println()
             println("Animation info")
             println("--------------")
-            println("Paused: ", plotter.is_paused)
+            println("Paused: ", is_paused)
+            println("Show counties: ", show_counties)
             println("Partitioner step time: ", step_time * 1e3, " ms")
             println("Plot time: ", plot_time * 1e3, " ms")
             println("Frame time: ", plotter.frame_time * 1e3, " ms")
             println("Steps per frame: ", steps_per_frame())
             println()
-        elseif command == "reset plot" || command == "reset anim"
+        elseif command == "pause plot" || command == "display_is_paused"
+            display_is_paused = !display_is_paused
+        elseif command == "reset plot" || command == "reset anim" || command == "update plot"
             update_plot()
+        elseif command == "show counties"
+            show_counties = !show_counties
         elseif command == "save image" || command == "save plot"
             println("Saving image to $params")
             GLMakie.save(params, fig, px_per_unit=8)
@@ -227,7 +237,7 @@ function animate!(plotter::Plotter)
     while loop_is_active[]
         loop_start_time = time()
 
-        if !plotter.is_paused
+        if !is_paused
 
             # Perform partitioner steps
             num_steps = steps_per_frame()
@@ -235,16 +245,16 @@ function animate!(plotter::Plotter)
                 Gerrymander.step!(plotter.partitioner)
             end
             step_end_time = time()
-
-            # Update plot
-            update_plot()
-            plot_end_time = time()
-
-            # Update times
             step_time *= (1 - time_decay)
             step_time += time_decay * (step_end_time - loop_start_time) / num_steps
-            plot_time *= (1 - time_decay)
-            plot_time += time_decay * (plot_end_time - step_end_time)
+
+            # Update plot
+            if !display_is_paused
+                update_plot()
+                plot_end_time = time()
+                plot_time *= (1 - time_decay)
+                plot_time += time_decay * (plot_end_time - step_end_time)
+            end
 
         end
 
