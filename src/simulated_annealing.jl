@@ -14,6 +14,7 @@ mutable struct Partitioner
     # Partitioner options
     temperature::Float64
     population_weight::Float64
+    force_connected::Bool
 
     # County data
     adjacency_graph::Graph.WeightedGraph
@@ -69,6 +70,7 @@ mutable struct Partitioner
         partitioner = new(
             1.0,
             1.0,
+            true,
             adjacency_graph,
             interaction_graph,
             county_populations,
@@ -120,15 +122,15 @@ function reset_partitions!(partitioner::Partitioner)
         push!(partition_to_counties[partition_id], county_id)
     end
 
-    # Make sure partitions are contiguous
-    partition_centers = Dict{UInt, UInt}(
-        id => first(partition_to_counties[id]) for id in partition_ids)
-    Graph.make_partition_contiguous!(
-        county_to_partition,
-        partition_to_counties,
-        partition_centers,
-        partitioner.adjacency_graph,
-    )
+    # Make sure partitions are connected if needed
+    if partitioner.force_connected
+        Graph.make_partition_connected!(
+            county_to_partition,
+            partition_to_counties,
+            partitioner.county_populations,
+            partitioner.adjacency_graph,
+        )
+    end
 
     # Compute partition populations
     partition_populations = partitioner.partition_populations
@@ -185,6 +187,7 @@ function _make_parse_command_func(partitioner::Partitioner)::Function
             println("----------")
             println("temperature")
             println("population weight")
+            println("force connected")
             println("interp steps")
             println("interp temperature")
             println("interp population weight")
@@ -204,11 +207,25 @@ function _make_parse_command_func(partitioner::Partitioner)::Function
         if command == "reset"
             partitioner.temperature = 1.0
             partitioner.population_weight= 1.0
+            partitioner.force_connected = true
             partitioner.interp_step = 0
             partitioner.interp_max_step = 0
             partitioner.interp_log_temperature_end = 0
             partitioner.interp_log_population_weight_end = 0
             reset_partitions!(partitioner)
+            return
+        end
+
+        # Make sure partitions are connected
+        if command == "force connected"
+            force_connected = true
+            if !isempty(params)
+                force_connected = parse(Bool, params)
+            end
+            partitioner.force_connected = force_connected
+            if partitioner.force_connected
+                reset_partitions!(partitioner)
+            end
             return
         end
 
@@ -277,6 +294,7 @@ function print_info(partitioner::Partitioner)
     println("----------------------")
     println("Temperature: ", partitioner.temperature)
     println("Population weight: ", partitioner.population_weight)
+    println("Force connected: ", partitioner.force_connected)
     print("\n")
 
     # Print interpolation state
@@ -452,6 +470,16 @@ function can_swap_county(
         elseif neighbor_partition_id == dst_partition_id
             push!(dst_neighbors, neighbor_id)
         end
+    end
+
+    # Cannot swap last county in partition
+    if length(partitioner.partition_to_counties[src_partition_id]) <= 1
+        return false
+    end
+
+    # County swap is valid if disconnected partitions are allowed
+    if !partitioner.force_connected
+        return true
     end
 
     # Cannot swap isolated counties

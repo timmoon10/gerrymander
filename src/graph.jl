@@ -6,34 +6,56 @@ import Random
 # Weighted graph
 WeightedGraph = Dict{UInt, Dict{UInt, Float64}}
 
-function make_partition_contiguous!(
+function make_partition_connected!(
     county_to_partition::Dict{UInt, UInt},
     partition_to_counties::Dict{UInt, Set{UInt}},
-    partition_center_county::Dict{UInt, UInt},
+    county_populations::Dict{UInt, UInt},
     graph::WeightedGraph,
     )::Nothing
 
     # Iterate through partitions
-    for partition_id in keys(partition_to_counties)
+    partition_ids = collect(keys(partition_to_counties))
+    Random.shuffle!(partition_ids)
+    for partition_id in partition_ids
         partition_counties = partition_to_counties[partition_id]
 
-        # BFS from partition center
-        center_id = partition_center_county[partition_id]
-        found_set = Set{UInt}([center_id])
-        search_queue = DataStructures.Queue{UInt}()
-        DataStructures.enqueue!(search_queue, center_id)
-        while !isempty(search_queue)
-            current = DataStructures.dequeue!(search_queue)
-            for neighbor in keys(graph[current])
-                if in(neighbor, partition_counties) && !in(neighbor, found_set)
-                    push!(found_set, neighbor)
-                    DataStructures.enqueue!(search_queue, neighbor)
+        # Split partition into connected regions with BFS
+        connected_regions = Vector{Tuple{UInt, Set{UInt}}}()
+        remaining_counties = copy(partition_counties)
+        while !isempty(remaining_counties)
+            start_county = pop!(remaining_counties)
+            region = Set{UInt}([start_county])
+            pop = county_populations[start_county]
+            search_queue = DataStructures.Queue{UInt}()
+            DataStructures.enqueue!(search_queue, start_county)
+            while !isempty(search_queue)
+                current = DataStructures.dequeue!(search_queue)
+                for neighbor in keys(graph[current])
+                    if in(neighbor, remaining_counties) && !in(neighbor, region)
+                        push!(region, neighbor)
+                        delete!(remaining_counties, neighbor)
+                        pop += county_populations[neighbor]
+                        DataStructures.enqueue!(search_queue, neighbor)
+                    end
                 end
             end
+            push!(connected_regions, (pop, region))
         end
 
-        # Identify disconnected counties
-        disconnected = setdiff(partition_counties, found_set)
+        # Nothing to be done if partition is already connected
+        if length(connected_regions) <= 1
+            continue
+        end
+
+        # Identify counties that disconnected from largest region
+        (max_pop, max_region) = connected_regions[1]
+        for (pop, region) in connected_regions[2:end]
+            if pop > max_pop
+                max_pop = pop
+                max_region = region
+            end
+        end
+        disconnected = setdiff(partition_counties, max_region)
         setdiff!(partition_counties, disconnected)
 
         # Reassign disconnected counties to neighboring partitions
@@ -49,6 +71,7 @@ function make_partition_contiguous!(
                         partition_to_counties[neighbor_partition_id],
                         county_id,
                     )
+                    delete!(disconnected, county_id)
                     break
                 end
             end
