@@ -169,7 +169,7 @@ function _make_parse_command_func(partitioner::Partitioner)::Function
             println("exit: exit")
             println("info: partitioner state")
             println("reset: reset partitioner properties")
-            println("interp: start/stop property interpolation")
+            println("interp: start property interpolation")
             println("save: save partitions to file")
             println("load: load partitions from file")
             println()
@@ -214,11 +214,8 @@ function _make_parse_command_func(partitioner::Partitioner)::Function
 
         # Start/stop property interpolation
         if command == "interp"
-            if partitioner.interp_step == 0
-                start_interp!(partitioner)
-            else
-                partitioner.interp_step = 0
-            end
+            println("Starting property interpolation...")
+            start_interp!(partitioner)
             return
         end
 
@@ -350,6 +347,7 @@ function interp_step!(partitioner::Partitioner)
         partitioner.temperature = exp(partitioner.interp_log_temperature_end)
         partitioner.population_weight = exp(partitioner.interp_log_population_weight_end)
         partitioner.interp_step = 0
+        println("Finished property interpolation...")
         return
     end
 

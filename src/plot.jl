@@ -181,13 +181,6 @@ function animate!(plotter::Plotter)
 
     function parse_command(command::String, params::String)
         if command == ""
-        elseif command == "pause" || command == "unpause"
-            if is_paused
-                println("Unpausing...")
-            else
-                println("Pausing...")
-            end
-            is_paused = !is_paused
         elseif command == "anim info" || command == "frame info"
             println()
             println("Animation info")
@@ -200,22 +193,32 @@ function animate!(plotter::Plotter)
             println("Frame time: ", plotter.frame_time * 1e3, " ms")
             println("Steps per frame: ", steps_per_frame())
             println()
-        elseif command == "pause plot" || command == "display_is_paused"
-            if display_is_paused
-                println("Unpausing display...")
+        elseif command == "pause" || command == "unpause"
+            if isempty(params)
+                is_paused = !is_paused
             else
-                println("Pausing display...")
+                is_paused = parse(Bool, params)
             end
-            display_is_paused = !display_is_paused
+            if is_paused
+                println("Pausing...")
+            else
+                println("Unpausing...")
+            end
+        elseif command == "pause plot"
+            if isempty(params)
+                display_is_paused = !display_is_paused
+            else
+                display_is_paused = parse(Bool, params)
+            end
+            if display_is_paused
+                println("Pausing display...")
+            else
+                println("Unpausing display...")
+            end
         elseif command == "reset plot" || command == "reset anim" || command == "update plot"
             update_plot()
         elseif command == "show counties"
-            if show_counties
-                println("Hiding county boundaries...")
-            else
-                println("Showing county boundaries...")
-            end
-            show_counties = !show_counties
+            show_counties = parse(Bool, params)
         elseif command == "save image" || command == "save plot"
             println("Saving image to $params")
             GLMakie.save(params, fig, px_per_unit=8)
