@@ -29,8 +29,8 @@ function main(args::Vector{String})
 
     # Partitioner
     num_partitions::UInt = 6
-    personal_stdev::Float64 = 50.0
-    max_distance::Float64 = 300.0
+    personal_stdev::Float64 = 100.0
+    max_distance::Float64 = 400.0
     partitioner = Gerrymander.SimulatedAnnealing.Partitioner(
         num_partitions,
         state_ids,

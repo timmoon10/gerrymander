@@ -193,6 +193,7 @@ function animate!(plotter::Plotter)
             println("Animation info")
             println("--------------")
             println("Paused: ", is_paused)
+            println("Paused display: ", display_is_paused)
             println("Show counties: ", show_counties)
             println("Partitioner step time: ", step_time * 1e3, " ms")
             println("Plot time: ", plot_time * 1e3, " ms")
@@ -200,10 +201,20 @@ function animate!(plotter::Plotter)
             println("Steps per frame: ", steps_per_frame())
             println()
         elseif command == "pause plot" || command == "display_is_paused"
+            if display_is_paused
+                println("Unpausing display...")
+            else
+                println("Pausing display...")
+            end
             display_is_paused = !display_is_paused
         elseif command == "reset plot" || command == "reset anim" || command == "update plot"
             update_plot()
         elseif command == "show counties"
+            if show_counties
+                println("Hiding county boundaries...")
+            else
+                println("Showing county boundaries...")
+            end
             show_counties = !show_counties
         elseif command == "save image" || command == "save plot"
             println("Saving image to $params")
@@ -274,7 +285,12 @@ function animate!(plotter::Plotter)
                     loop_is_active[] = false
                     break
                 else
-                    parse_command(command, params)
+                    try
+                        parse_command(command, params)
+                    catch err
+                        println("Error while processing command \"$command\"")
+                        println(err)
+                    end
                 end
             end
             unlock(command_lock)

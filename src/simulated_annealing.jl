@@ -237,7 +237,7 @@ function _make_parse_command_func(partitioner::Partitioner)::Function
         end
         if command == "interp temperature"
             temperature = parse(Float64, params)
-            if params <= 0
+            if temperature <= 0
                 println("Invalid interp temperature: ", temperature)
             else
                 partitioner.interp_log_temperature_end = log(temperature)
@@ -246,7 +246,7 @@ function _make_parse_command_func(partitioner::Partitioner)::Function
         end
         if command == "interp population weight"
             population_weight = parse(Float64, params)
-            if params <= 0
+            if population_weight <= 0
                 println("Invalid interp population weight: ", population_weight)
             else
                 partitioner.interp_log_population_weight_end = log(population_weight)
@@ -414,6 +414,11 @@ function update_county_swap_candidates!(
         if haskey(partition_affinities, neighbor_partition_id)
             partition_affinities[neighbor_partition_id] += affinity
         end
+    end
+
+    # Compute log of affinity
+    for (partition_id, affinity) in partition_affinities
+        partition_affinities[partition_id] = log(max(affinity, 1e-12))
     end
 
     # Update list of swap candidates
