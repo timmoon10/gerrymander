@@ -61,7 +61,7 @@ mutable struct Partitioner
             for i in 1:size(county_population_data, 1))
 
         # Initial partition
-        (county_to_partition, partition_to_counties) = Graph.random_partition(
+        (county_to_partition, partition_to_counties) = Graph.random_connected_partition(
             num_partitions,
             adjacency_graph,
         )
@@ -172,6 +172,7 @@ function _make_parse_command_func(partitioner::Partitioner)::Function
             println("info: partitioner state")
             println("reset: reset partitioner properties")
             println("interp: start property interpolation")
+            println("full shuffle: generate random disconnected partitions")
             println("save: save partitions to file")
             println("load: load partitions from file")
             println()
@@ -233,6 +234,18 @@ function _make_parse_command_func(partitioner::Partitioner)::Function
         if command == "interp"
             println("Starting property interpolation...")
             start_interp!(partitioner)
+            return
+        end
+
+        # Fullly shuffle partitions
+        if command == "full shuffle"
+            (county_to_partition, partition_to_counties) = Graph.random_partition(
+                UInt(length(partitioner.partition_to_counties)),
+                partitioner.adjacency_graph,
+            )
+            partitioner.county_to_partition = county_to_partition
+            partitioner.partition_to_counties = partition_to_counties
+            reset_partitions!(partitioner)
             return
         end
 

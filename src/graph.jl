@@ -81,7 +81,7 @@ function make_partition_connected!(
 
 end
 
-function random_partition(
+function random_connected_partition(
     num_partitions::UInt,
     graph::Graph.WeightedGraph,
     )::Tuple{Dict{UInt, UInt}, Dict{UInt, Set{UInt}}}
@@ -182,6 +182,48 @@ function random_partition(
     # Check results
     if length(county_to_partition) != num_counties
         throw("Failed to partition graph, maybe because graph is disconnected")
+    end
+
+    return (county_to_partition, partition_to_counties)
+
+end
+
+function random_partition(
+    num_partitions::UInt,
+    graph::Graph.WeightedGraph,
+    )::Tuple{Dict{UInt, UInt}, Dict{UInt, Set{UInt}}}
+
+    # Check number of partitions
+    county_ids = collect(keys(graph))
+    num_counties = length(county_ids)
+    if num_partitions > num_counties || num_partitions == 0
+        throw(
+            "Invalid number of partitions "
+            * "($num_partitions partitions, $num_counties counties)"
+        )
+    end
+
+    # Partition data
+    partition_ids = collect(1:num_partitions)
+    county_to_partition = Dict{UInt, UInt}()
+    sizehint!(county_to_partition, num_counties)
+    partition_to_counties = Dict{UInt, Set{UInt}}(
+        id => Set{UInt}() for id in partition_ids)
+
+    # Populate each partition with one county
+    Random.shuffle!(county_ids)
+    for i in 1:num_partitions
+        county_id = county_ids[i]
+        partition_id = UInt(i)
+        county_to_partition[county_id] = partition_id
+        push!(partition_to_counties[partition_id], county_id)
+    end
+
+    # Randomly assign remaining counties
+    for county_id in county_ids[num_partitions+1:end]
+        partition_id = rand(1:num_partitions)
+        county_to_partition[county_id] = partition_id
+        push!(partition_to_counties[partition_id], county_id)
     end
 
     return (county_to_partition, partition_to_counties)

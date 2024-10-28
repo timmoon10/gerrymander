@@ -219,12 +219,12 @@ function animate!(plotter::Plotter)
             update_plot()
         elseif command == "show counties"
             show_counties = parse(Bool, params)
+            update_plot()
         elseif command == "save image" || command == "save plot"
             println("Saving image to $params")
             GLMakie.save(params, fig, px_per_unit=8)
         elseif hasfield(typeof(plotter.partitioner), :parse_command_func)
             plotter.partitioner.parse_command_func(command, params)
-            update_plot()
         else
             println("Unrecognized command: ", command)
         end

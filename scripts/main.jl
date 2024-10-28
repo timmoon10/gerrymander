@@ -9,7 +9,7 @@ function parse_args()
             default = 4
         "--personal-stdev"
             arg_type = Float64
-            default = 100.0
+            default = 50.0
         "--personal-max-distance"
             arg_type = Float64
             default = 400.0
