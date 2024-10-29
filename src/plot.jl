@@ -1,6 +1,7 @@
 module Plot
 
 import Base.Threads
+import ColorSchemes
 import GLMakie
 import Memoize
 
@@ -8,7 +9,7 @@ import ..Gerrymander
 import ..DataFiles
 import ..Geometry
 
-@Memoize.memoize function color_list()::Vector{GLMakie.RGBf}
+@Memoize.memoize function wong_colorscheme()::Vector{GLMakie.RGBf}
     colors = [
         (86, 180, 233),
         (213, 94, 0),
@@ -21,9 +22,38 @@ import ..Geometry
     return [GLMakie.RGBf(r/255, g/255, b/255) for (r, g, b) in colors]
 end
 
-function pick_color(i::UInt)::GLMakie.RGBf
-    colors = color_list()
-    return colors[i % length(colors) + 1]
+function categorical_colors(data::Dict{UInt, UInt})::Dict{UInt, GLMakie.RGBf}
+    colorscheme = wong_colorscheme()
+    colors = Dict{UInt, GLMakie.RGBf}()
+    sizehint!(colors, length(data))
+    for (id, val) in data
+        colors[id] = colorscheme[val % length(colorscheme) + 1]
+    end
+    return colors
+end
+
+function log_scale_colors(data::Dict)::Dict{UInt, GLMakie.RGBf}
+
+    # Find min and max values
+    min_val::Float64 = Inf
+    max_val::Float64 = -Inf
+    for val::Float64 in values(data)
+        min_val = min(min_val, val)
+        max_val = max(max_val, val)
+    end
+
+    # Compute log and pick viridis color
+    colors = Dict{UInt, GLMakie.RGBf}()
+    sizehint!(colors, length(data))
+    shift = log(min_val)
+    scale = 1 / max(log(max_val) - log(min_val), 1e-12)
+    for (id, val::Float64) in data
+        t = (log(val) - shift) * scale
+        colors[id] = ColorSchemes.viridis[t]
+    end
+
+    return colors
+
 end
 
 mutable struct Plotter
@@ -137,7 +167,7 @@ function animate!(plotter::Plotter)
         num_steps = max(num_steps, 1)
     end
 
-    function update_plot()
+    function plot_partition_data(colors::Dict{UInt, GLMakie.RGBf})
 
         # Compute partition shapes
         partition_shapes = Geometry.make_partition_shapes(
@@ -150,17 +180,15 @@ function animate!(plotter::Plotter)
 
         # Plot partitions
         for partition_id in plotter.partition_ids
-            color = pick_color(partition_id)
-            @inbounds for polygon in partition_shapes[partition_id]
-                @inbounds for (x, y) in polygon
-                    GLMakie.poly!(
-                        polygon,
-                        color=color,
-                        stroke_depth_shift=0,
-                        strokecolor=:black,
-                        strokewidth=2,
-                    )
-                end
+            color = colors[partition_id]
+            for polygon in partition_shapes[partition_id]
+                GLMakie.poly!(
+                    polygon,
+                    color=color,
+                    stroke_depth_shift=0,
+                    strokecolor=:black,
+                    strokewidth=2,
+                )
             end
         end
 
@@ -174,6 +202,66 @@ function animate!(plotter::Plotter)
         # Display plot
         GLMakie.display(fig)
 
+    end
+
+    function plot_county_data(colors::Dict{UInt, GLMakie.RGBf})
+
+        # Compute partition shapes
+        partition_shapes = Geometry.make_partition_shapes(
+            plotter.county_boundaries,
+            plotter.partitioner.partition_to_counties,
+        )
+
+        # Reset plot
+        GLMakie.empty!(ax)
+
+        # Plot counties
+        for (county_id, multipolygon) in plotter.county_boundaries
+            color = colors[county_id]
+            for polygon in multipolygon
+                plot_polygon = Vector{Vector{Tuple{Float64, Float64}}}()
+                sizehint!(plot_polygon, length(polygon))
+                for line in polygon
+                    plot_line = Vector{Tuple{Float64, Float64}}()
+                    sizehint!(plot_line, length(line))
+                    push!(plot_polygon, plot_line)
+                    for point in line
+                        push!(plot_line, (point[1], point[2]))
+                    end
+                end
+                GLMakie.poly!(
+                    plot_polygon,
+                    color=color,
+                    stroke_depth_shift=0,
+                    strokecolor=:black,
+                    strokewidth=0.25,
+                )
+            end
+        end
+
+        # Plot partitions
+        for partition_id in plotter.partition_ids
+            @inbounds for polygon in partition_shapes[partition_id]
+                GLMakie.poly!(
+                    polygon,
+                    color=:transparent,
+                    stroke_depth_shift=0,
+                    strokecolor=:black,
+                    strokewidth=2,
+                )
+            end
+        end
+
+        # Display plot
+        GLMakie.display(fig)
+
+    end
+
+    function update_plot()
+        colors = categorical_colors(
+            Dict{UInt, UInt}(id => id for id in plotter.partition_ids)
+        )
+        plot_partition_data(colors)
     end
 
     # Initialize plot
@@ -223,6 +311,12 @@ function animate!(plotter::Plotter)
         elseif command == "save image" || command == "save plot"
             println("Saving image to $params")
             GLMakie.save(params, fig, px_per_unit=8)
+        elseif command == "plot county populations"
+            colors = log_scale_colors(plotter.partitioner.county_populations)
+            plot_county_data(colors)
+        elseif command == "plot partition populations"
+            colors = log_scale_colors(plotter.partitioner.partition_populations)
+            plot_partition_data(colors)
         elseif hasfield(typeof(plotter.partitioner), :parse_command_func)
             plotter.partitioner.parse_command_func(command, params)
         else
