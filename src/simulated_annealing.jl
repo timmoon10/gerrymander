@@ -160,7 +160,12 @@ end
 function _make_parse_command_func(partitioner::Partitioner)::Function
 
     "Logic for user commands"
-    function parse_command_func(command::String, params::String)
+    function parse_command_func(
+        command::String,
+        params::String,
+        plot_partitions_func::Function,
+        plot_counties_func::Function,
+        )
 
         # Help message
         if command == "help"
@@ -183,6 +188,11 @@ function _make_parse_command_func(partitioner::Partitioner)::Function
             println("reset plot: reset animation plot")
             println("save image: save image to file")
             println("show counties: toggle showing county boundaries")
+            println()
+            println("Data plots")
+            println("----------")
+            println("plot county populations")
+            println("plot partition populations")
             println()
             println("Properties")
             println("----------")
@@ -288,6 +298,16 @@ function _make_parse_command_func(partitioner::Partitioner)::Function
         end
         if command == "load"
             load_partition!(partitioner, String(params))
+            return
+        end
+
+        # Plot data
+        if command == "plot county populations"
+            plot_counties_func(partitioner.county_populations, log_scale=true)
+            return
+        end
+        if command == "plot partition populations"
+            plot_partitions_func(partitioner.partition_populations, log_scale=true)
             return
         end
 

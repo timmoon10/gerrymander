@@ -32,24 +32,47 @@ function categorical_colors(data::Dict{UInt, UInt})::Dict{UInt, GLMakie.RGBf}
     return colors
 end
 
-function log_scale_colors(data::Dict)::Dict{UInt, GLMakie.RGBf}
+function range_colors(
+    data::Dict;
+    log_scale::Bool = false,
+    range_min::Union{Float64, Nothing} = nothing,
+    range_max::Union{Float64, Nothing} = nothing,
+    colorscheme::Union{ColorSchemes.ColorScheme, Nothing} = nothing,
+    )::Dict{UInt, GLMakie.RGBf}
 
-    # Find min and max values
+    # Find value range
     min_val::Float64 = Inf
     max_val::Float64 = -Inf
     for val::Float64 in values(data)
         min_val = min(min_val, val)
         max_val = max(max_val, val)
     end
+    if isnothing(range_min)
+        range_min = min_val
+    end
+    if isnothing(range_max)
+        range_max = max_val
+    end
+    if log_scale
+        range_min = log(range_min)
+        range_max = log(range_max)
+    end
 
-    # Compute log and pick viridis color
+    # Scale and shift to convert values to unit range
+    shift = range_min
+    scale = 1 / max(range_max - range_min, 1e-12)
+
+    # Pick color from viridis colorscheme
     colors = Dict{UInt, GLMakie.RGBf}()
     sizehint!(colors, length(data))
-    shift = log(min_val)
-    scale = 1 / max(log(max_val) - log(min_val), 1e-12)
+    if isnothing(colorscheme)
+        colorscheme = ColorSchemes.viridis
+    end
     for (id, val::Float64) in data
-        t = (log(val) - shift) * scale
-        colors[id] = ColorSchemes.viridis[t]
+        if log_scale
+            val = log(val)
+        end
+        colors[id] = colorscheme[(val - shift) * scale]
     end
 
     return colors
@@ -167,7 +190,7 @@ function animate!(plotter::Plotter)
         num_steps = max(num_steps, 1)
     end
 
-    function plot_partition_data(colors::Dict{UInt, GLMakie.RGBf})
+    function plot_partitions(colors::Dict{UInt, GLMakie.RGBf})
 
         # Compute partition shapes
         partition_shapes = Geometry.make_partition_shapes(
@@ -204,7 +227,7 @@ function animate!(plotter::Plotter)
 
     end
 
-    function plot_county_data(colors::Dict{UInt, GLMakie.RGBf})
+    function plot_counties(colors::Dict{UInt, GLMakie.RGBf})
 
         # Compute partition shapes
         partition_shapes = Geometry.make_partition_shapes(
@@ -257,11 +280,45 @@ function animate!(plotter::Plotter)
 
     end
 
+    function plot_partition_data(
+        data::Dict;
+        log_scale::Bool = false,
+        range_min::Union{Float64, Nothing} = nothing,
+        range_max::Union{Float64, Nothing} = nothing,
+        colorscheme::Union{ColorSchemes.ColorScheme, Nothing} = nothing,
+        )
+        colors = range_colors(
+            data,
+            log_scale=log_scale,
+            range_min=range_min,
+            range_max=range_max,
+            colorscheme=colorscheme,
+        )
+        plot_partitions(colors)
+    end
+
+    function plot_county_data(
+        data::Dict;
+        log_scale::Bool = false,
+        range_min::Union{Float64, Nothing} = nothing,
+        range_max::Union{Float64, Nothing} = nothing,
+        colorscheme::Union{ColorSchemes.ColorScheme, Nothing} = nothing,
+        )
+        colors = range_colors(
+            data,
+            log_scale=log_scale,
+            range_min=range_min,
+            range_max=range_max,
+            colorscheme=colorscheme,
+        )
+        plot_counties(colors)
+    end
+
     function update_plot()
         colors = categorical_colors(
             Dict{UInt, UInt}(id => id for id in plotter.partition_ids)
         )
-        plot_partition_data(colors)
+        plot_partitions(colors)
     end
 
     # Initialize plot
@@ -311,14 +368,13 @@ function animate!(plotter::Plotter)
         elseif command == "save image" || command == "save plot"
             println("Saving image to $params")
             GLMakie.save(params, fig, px_per_unit=8)
-        elseif command == "plot county populations"
-            colors = log_scale_colors(plotter.partitioner.county_populations)
-            plot_county_data(colors)
-        elseif command == "plot partition populations"
-            colors = log_scale_colors(plotter.partitioner.partition_populations)
-            plot_partition_data(colors)
         elseif hasfield(typeof(plotter.partitioner), :parse_command_func)
-            plotter.partitioner.parse_command_func(command, params)
+            plotter.partitioner.parse_command_func(
+                command,
+                params,
+                plot_partition_data,
+                plot_county_data,
+            )
         else
             println("Unrecognized command: ", command)
         end
