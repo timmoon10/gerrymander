@@ -5,6 +5,7 @@ include(joinpath(@__DIR__, "graph.jl"))
 include(joinpath(@__DIR__, "geometry.jl"))
 include(joinpath(@__DIR__, "data_files.jl"))
 include(joinpath(@__DIR__, "data_graphs.jl"))
+include(joinpath(@__DIR__, "election.jl"))
 include(joinpath(@__DIR__, "simulated_annealing.jl"))
 using .SimulatedAnnealing: step!
 include(joinpath(@__DIR__, "plot.jl"))

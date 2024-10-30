@@ -7,6 +7,7 @@ import Memoize
 
 import ..Gerrymander
 import ..DataFiles
+import ..Election
 import ..Geometry
 
 @Memoize.memoize function wong_colorscheme()::Vector{GLMakie.RGBf}
@@ -365,6 +366,20 @@ function animate!(plotter::Plotter)
         elseif command == "show counties"
             show_counties = parse(Bool, params)
             update_plot()
+        elseif command == "simulate election"
+            gop_fraction, (dem_electoral, gop_electoral) = Election.simulate_election(
+                plotter.partition_ids,
+                plotter.partitioner.county_to_partition,
+                plotter.partitioner.partition_populations,
+            )
+            println("Democrat: $dem_electoral")
+            println("Republican: $gop_electoral")
+            plot_partition_data(
+                gop_fraction,
+                range_min=0.45,
+                range_max=0.55,
+                colorscheme=ColorSchemes.bwr,
+            )
         elseif command == "save image" || command == "save plot"
             println("Saving image to $params")
             GLMakie.save(params, fig, px_per_unit=8)

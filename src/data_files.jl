@@ -412,4 +412,28 @@ function load_county_boundaries_lambert(
 
 end
 
+function load_election_data()::Dict{UInt, Tuple{UInt, UInt, UInt}}
+
+    # Load parsed election data
+    cache_file = joinpath(root_dir(), "data", "election2020.csv")
+    if !isfile(cache_file)
+        throw("Could not find election data that has been parsed with scripts/parse_election.jl")
+    end
+    (data, _) = DelimitedFiles.readdlm(
+        cache_file,
+        ',',
+        header=true,
+    )
+
+    # Pack data into dict
+    out = Dict{UInt, Tuple{UInt, UInt, UInt}}()
+    sizehint!(out, size(data, 1))
+    for i in 1:size(data, 1)
+        out[data[i,1]] = (data[i,2], data[i,3], data[i,4])
+    end
+
+    return out
+
+end
+
 end  # module DataFiles
