@@ -10,25 +10,12 @@ import ..DataFiles
 import ..Election
 import ..Geometry
 
-@Memoize.memoize function wong_colorscheme()::Vector{GLMakie.RGBf}
-    colors = [
-        (86, 180, 233),
-        (213, 94, 0),
-        (0, 158, 115),
-        (240, 228, 66),
-        (0, 114, 178),
-        (204, 121, 167),
-        (230, 159, 0),
-    ]
-    return [GLMakie.RGBf(r/255, g/255, b/255) for (r, g, b) in colors]
-end
-
 function categorical_colors(data::Dict{UInt, UInt})::Dict{UInt, GLMakie.RGBf}
-    colorscheme = wong_colorscheme()
+    colorscheme = ColorSchemes.tab20
     colors = Dict{UInt, GLMakie.RGBf}()
     sizehint!(colors, length(data))
     for (id, val) in data
-        colors[id] = colorscheme[val % length(colorscheme) + 1]
+        colors[id] = colorscheme[hash(id) % length(colorscheme) + 1]
     end
     return colors
 end
@@ -206,6 +193,10 @@ function animate!(plotter::Plotter)
         for partition_id in plotter.partition_ids
             color = colors[partition_id]
             for polygon in partition_shapes[partition_id]
+                polygon = GLMakie.Polygon(
+                    Vector{GLMakie.Point2f}(polygon[1]),
+                    Vector{Vector{GLMakie.Point2f}}([line for line in polygon[2:end]]),
+                )
                 GLMakie.poly!(
                     polygon,
                     color=color,
@@ -243,16 +234,17 @@ function animate!(plotter::Plotter)
         for (county_id, multipolygon) in plotter.county_boundaries
             color = colors[county_id]
             for polygon in multipolygon
-                plot_polygon = Vector{Vector{Tuple{Float64, Float64}}}()
+                plot_polygon = Vector{Vector{GLMakie.Point2f}}()
                 sizehint!(plot_polygon, length(polygon))
                 for line in polygon
-                    plot_line = Vector{Tuple{Float64, Float64}}()
+                    plot_line = Vector{GLMakie.Point2f}()
                     sizehint!(plot_line, length(line))
                     push!(plot_polygon, plot_line)
                     for point in line
                         push!(plot_line, (point[1], point[2]))
                     end
                 end
+                plot_polygon = GLMakie.Polygon(plot_polygon[1], plot_polygon[2:end])
                 GLMakie.poly!(
                     plot_polygon,
                     color=color,

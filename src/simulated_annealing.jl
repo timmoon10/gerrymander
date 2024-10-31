@@ -193,6 +193,7 @@ function _make_parse_command_func(partitioner::Partitioner)::Function
             println("----------")
             println("plot county populations")
             println("plot partition populations")
+            println("simulate election")
             println()
             println("Properties")
             println("----------")
